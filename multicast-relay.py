@@ -674,7 +674,7 @@ class PacketRelay():
                         # so as we receive the unicast answers to a well known port (1901)
                         srcAddr = self.ssdpUnicastAddr
                         srcPort = PacketRelay.SSDP_UNICAST_PORT
-                        data = PacketRelay.modifyUdpPacket(data, ipHeaderLength, srcAddr=srcAddr, srcPort=srcPort)
+                        data = self.modifyUdpPacket(data, ipHeaderLength, srcAddr=srcAddr, srcPort=srcPort)
 
                     elif self.ssdpUnicastAddr and origDstAddr == self.ssdpUnicastAddr and origDstPort == PacketRelay.SSDP_UNICAST_PORT:
                         if not recentSsdpSearchSrc:
@@ -689,7 +689,7 @@ class PacketRelay():
                         dstAddr = recentSsdpSearchSrc['addr']
                         dstPort = recentSsdpSearchSrc['port']
                         self.logger.info('Received SSDP Unicast - received from %s:%d on %s:%d, need to relay to %s:%d' % (origSrcAddr, origSrcPort, origDstAddr, origDstPort, dstAddr, dstPort))
-                        data = PacketRelay.modifyUdpPacket(data, ipHeaderLength, dstAddr=dstAddr, dstPort=dstPort)
+                        data = self.modifyUdpPacket(data, ipHeaderLength, dstAddr=dstAddr, dstPort=dstPort)
 
                         try:
                             destMacAddr = PacketRelay.unicastIpToMac(dstAddr)
