@@ -369,28 +369,27 @@ class PacketRelay():
         # Default to None if key not in dict
         return ip2mac.get(ip, None)
 
-    @staticmethod
-    def modifyUdpPacket(data, ipHeaderLength, srcAddr=None, srcPort=None, dstAddr=None, dstPort=None):
+    def modifyUdpPacket(self, data, ipHeaderLength, srcAddr=None, srcPort=None, dstAddr=None, dstPort=None):
         srcAddr = srcAddr if srcAddr else socket.inet_ntoa(data[12:16])
         dstAddr = dstAddr if dstAddr else socket.inet_ntoa(data[16:20])
-
+    
         srcPort = srcPort if srcPort else struct.unpack('!H', data[ipHeaderLength+0:ipHeaderLength+2])[0]
         dstPort = dstPort if dstPort else struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
-
+    
         # Recreate the packet
         ipHeader = data[:12] + socket.inet_aton(srcAddr) + socket.inet_aton(dstAddr) + data[20:ipHeaderLength]
-
+    
         udpData = data[ipHeaderLength+8:]
         udpLength = 8 + len(udpData)
         udpHeader = struct.pack('!4H', srcPort, dstPort, udpLength, 0)
-
+    
         # Recalculate IP total length
         totalLength = ipHeaderLength + len(udpHeader) + len(udpData)
         ipHeader = ipHeader[:2] + struct.pack('!H', totalLength) + ipHeader[4:]
-
+    
         # Recalculate IP checksum
         ipHeader = self.computeIPChecksum(ipHeader + udpHeader + udpData, ipHeaderLength)[:ipHeaderLength]
-
+    
         return ipHeader + udpHeader + udpData
 
     @staticmethod
