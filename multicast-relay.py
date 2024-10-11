@@ -240,6 +240,10 @@ class PacketRelay():
             self.listenSock.listen(0)
         elif self.remoteAddrs:
             self.connectRemotes()
+        self.ip_mac_map = {}
+        for interface in self.interfaces:
+            (ifname, mac, ip, netmask, broadcast) = self.getInterface(interface)
+            self.ip_mac_map[ip] = mac
 
     def connectRemotes(self):
         for remote in self.remoteAddrs:
@@ -692,14 +696,29 @@ class PacketRelay():
                         data = self.modifyUdpPacket(data, ipHeaderLength, dstAddr=dstAddr, dstPort=dstPort)
 
                         try:
-                            destMacAddr = PacketRelay.unicastIpToMac(dstAddr)
-                            if destMacAddr:
-                                destMac = binascii.unhexlify(destMacAddr.replace(':', ''))
+                            if dstAddr in self.ip_mac_map:
+                                # Destination is router's own IP address
+                                destMac = self.ip_mac_map[dstAddr]
                             else:
-                                self.logger.info('DEBUG: could not resolve mac for %s' % dstAddr)
-                                continue
+                                destMacAddr = PacketRelay.unicastIpToMac(dstAddr)
+                                if destMacAddr:
+                                    destMac = binascii.unhexlify(destMacAddr.replace(':', ''))
+                                else:
+                                    self.logger.info('DEBUG: could not resolve mac for %s' % dstAddr)
+                                    continue
                         except Exception as e:
                             self.logger.info('DEBUG: exception while resolving mac of IP %s: %s' % (dstAddr, str(e)))
+                            continue
+                            
+                        # Determine the appropriate transmitter (interface) to send the packet on
+                        tx_found = False
+                        for tx in self.transmitters:
+                            if self.onNetwork(dstAddr, tx['addr'], tx['netmask']):
+                                # Found the transmitter corresponding to the network
+                                tx_found = True
+                                break
+                        if not tx_found:
+                            self.logger.info('DEBUG: could not find transmitter for dstAddr %s' % dstAddr)
                             continue
 
                     # Determine if the packet is a query from an interface we should not relay queries from
@@ -776,6 +795,9 @@ class PacketRelay():
                                         self.logger.info('Error sending packet: %s' % str(e))
                                 else:
                                     self.logger.info('Error sending packet: %s' % str(e))
+                                continue  # Skip to next packet
+                            # Skip the rest of the loop for this packet
+                            continue
 
     def getInterface(self, interface):
         ifname = None
