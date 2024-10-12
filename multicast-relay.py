@@ -1136,8 +1136,8 @@ def main():
                               noRemoteRelay        = args.noRemoteRelay,
                               aes                  = args.aes,
                               logger               = logger,
-                              noQueryInterfaces    = args.noQueryInterfaces
-                              noAdvertiseInterfaces=args.noAdvertiseInterfaces)
+                              noQueryInterfaces    = args.noQueryInterfaces,
+                              noAdvertiseInterfaces = args.noAdvertiseInterfaces)
 
     for relay in relays:
         try:
