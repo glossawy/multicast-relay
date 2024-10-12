@@ -176,9 +176,11 @@ class PacketRelay():
     def __init__(self, interfaces, noTransmitInterfaces, ifFilter, waitForIP, ttl,
                  oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther,
                  ssdpUnicastAddr, mdnsForceUnicast, masquerade, listen, remote,
-                 remotePort, remoteRetry, noRemoteRelay, aes, logger, noQueryInterfaces):
+                 remotePort, remoteRetry, noRemoteRelay, aes, logger, noQueryInterfaces,
+                 noAdvertiseInterfaces):
         self.interfaces = interfaces
         self.noTransmitInterfaces = noTransmitInterfaces or []
+        self.noAdvertiseInterfaces = noAdvertiseInterfaces or []
 
         if ifFilter:
             with open(ifFilter) as fd:
@@ -543,6 +545,20 @@ class PacketRelay():
 
         return qr == 0  # Return True if it's a query
 
+    def isMDNSAdvertisement(self, data, ipHeaderLength):
+        # mDNS uses UDP port 5353
+        udpHeader = data[ipHeaderLength:ipHeaderLength+8]
+        dstPort = struct.unpack('!H', udpHeader[2:4])[0]
+    
+        if dstPort != self.MDNS_MCAST_PORT:
+            return False  # Not mDNS packet
+    
+        dnsHeader = data[ipHeaderLength+8:ipHeaderLength+20]  # DNS header is 12 bytes
+        flags = struct.unpack('!H', dnsHeader[2:4])[0]
+        qr = (flags >> 15) & 0x1  # QR bit is the highest bit
+    
+        return qr == 1  # Return True if it's an advertisement (response)
+
     def isSSDPQuery(self, data, ipHeaderLength):
         # SSDP uses UDP port 1900
         udpHeader = data[ipHeaderLength:ipHeaderLength+8]
@@ -787,6 +803,11 @@ class PacketRelay():
                     for tx in self.transmitters:
                         # Re-transmit on all other interfaces than on the interface that we received this packet from...
                         if receivingInterface == tx['interface']:
+                            continue
+
+                        # Check if the packet is an mDNS advertisement and should not be relayed to this interface
+                        if self.isMDNSAdvertisement(data, ipHeaderLength) and tx['interface'] in self.noAdvertiseInterfaces:
+                            self.logger.info('Skipping mDNS advertisement relay to interface %s' % tx['interface'])
                             continue
     
                         transmit = True
@@ -1054,6 +1075,9 @@ def main():
                         help='Save logs to this file.')
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output.')
+    parser.add_argument('--noAdvertiseInterfaces', nargs='+',
+                        help='Interfaces to which mDNS advertisements should not be relayed.')
+
     args = parser.parse_args()
 
     if len(args.interfaces) < 2 and not args.oneInterface and not args.listen and not args.remote:
@@ -1112,7 +1136,8 @@ def main():
                               noRemoteRelay        = args.noRemoteRelay,
                               aes                  = args.aes,
                               logger               = logger,
-                              noQueryInterfaces    = args.noQueryInterfaces)
+                              noQueryInterfaces    = args.noQueryInterfaces
+                              noAdvertiseInterfaces=args.noAdvertiseInterfaces)
 
     for relay in relays:
         try:
