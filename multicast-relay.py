@@ -1552,14 +1552,22 @@ def main():
     if not args.noSSDP:
         relays.add(
             (
-                "%s:%d" % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORT),
+                "%s:%d"
+                % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORTS[0]),
                 "SSDP",
             )
         )
     if not args.noBambuDiscovery:
-        relays.add(("%s:%d" % (PacketRelay.BROADCAST, 1900), "Bambu Labs Discovery"))
-        relays.add(("%s:%d" % (PacketRelay.BROADCAST, 1990), "Bambu Labs Discovery"))
-        relays.add(("%s:%d" % (PacketRelay.BROADCAST, 2021), "Bambu Labs Discovery"))
+        if args.noSSDP:
+            relays.add(
+                ("%s:%d" % (PacketRelay.SSDP_MCAST_ADDR, 1900), "Bambu Labs Discovery")
+            )
+        relays.add(
+            ("%s:%d" % (PacketRelay.SSDP_MCAST_ADDR, 1990), "Bambu Labs Discovery")
+        )
+        relays.add(
+            ("%s:%d" % (PacketRelay.SSDP_MCAST_ADDR, 2021), "Bambu Labs Discovery")
+        )
     if not args.noSonosDiscovery:
         relays.add(("%s:%d" % (PacketRelay.BROADCAST, 1900), "Sonos Discovery"))
         relays.add(("%s:%d" % (PacketRelay.BROADCAST, 6969), "Sonos Setup Discovery"))
