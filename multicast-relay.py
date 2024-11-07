@@ -13,6 +13,7 @@ import struct
 import sys
 import threading
 import time
+from tkinter import Pack
 
 # Al Smith <ajs@aeschi.eu> January 2018
 # https://github.com/alsmith/multicast-relay
@@ -233,7 +234,8 @@ class PacketRelay:
     MULTICAST_MAX = "239.255.255.255"
     BROADCAST = "255.255.255.255"
     SSDP_MCAST_ADDR = "239.255.255.250"
-    SSDP_MCAST_PORTS = [1900]
+    BAMBU_PORTS = [1990, 2021]
+    SSDP_MCAST_PORTS = [1900, *BAMBU_PORTS]
     SSDP_UNICAST_PORT = 1901
     MDNS_MCAST_ADDR = "224.0.0.251"
     MDNS_MCAST_PORT = 5353
@@ -1558,16 +1560,11 @@ def main():
             )
         )
     if not args.noBambuDiscovery:
-        if args.noSSDP:
-            relays.add(
-                ("%s:%d" % (PacketRelay.SSDP_MCAST_ADDR, 1900), "Bambu Labs Discovery")
-            )
-        relays.add(
-            ("%s:%d" % (PacketRelay.SSDP_MCAST_ADDR, 1990), "Bambu Labs Discovery")
-        )
-        relays.add(
-            ("%s:%d" % (PacketRelay.SSDP_MCAST_ADDR, 2021), "Bambu Labs Discovery")
-        )
+        for port in PacketRelay.SSDP_MCAST_PORTS:
+            if port != 1900 or args.noSSDP:
+                relays.add((f"{PacketRelay.SSDP_MCAST_ADDR}:{port}", "Bambu Labs"))
+            relays.add((f"{PacketRelay.BROADCAST}:{port}", "Bambu Labs"))
+
     if not args.noSonosDiscovery:
         relays.add(("%s:%d" % (PacketRelay.BROADCAST, 1900), "Sonos Discovery"))
         relays.add(("%s:%d" % (PacketRelay.BROADCAST, 6969), "Sonos Setup Discovery"))
