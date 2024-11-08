@@ -1,11 +1,12 @@
 from dataclasses import dataclass
+
+from collections import deque
 from typing import Callable
 from multicast_relay import constants
 from multicast_relay.datagrams.raw import RawDatagram, UDPDatagram
 from multicast_relay.datagrams.ssdp import SSDPDatagram
 from multicast_relay.handlers.types import Handler
 
-from collections import deque
 
 from multicast_relay.logging import Logger
 
@@ -23,7 +24,7 @@ class Bambu(Handler):
     def __init__(self, logger: Logger, transmit: Callable[[RawDatagram], None]) -> None:
         self.logger = logger
         self.transmit = transmit
-        self.waiting_clients: deque[WaitingClient] = deque()
+        self.waiting_clients: deque[WaitingClient] = deque(maxlen=255)
 
     def can_handle_datagram(self, datagram: RawDatagram) -> bool:
         return (
@@ -43,13 +44,11 @@ class Bambu(Handler):
                     f"[Bambu]: Attempting to transmit to waiting client {client.address} at port {tx_dgram.dst_port} from {tx_dgram.src_address}:{tx_dgram.src_port}"
                 )
                 self.transmit(tx_dgram)
-
-            self.waiting_clients.clear()
         elif datagram.src_port != constants.SSDP_MCAST_PORT:
             self.logger.info(
                 f"Enqueued waiting Bambu client as {datagram.src_address}:{datagram.src_port}"
             )
-            self._enqueue(WaitingClient(datagram.src_address))
+            self._enqueue(datagram.src_address)
         else:
             self.logger.info(
                 f"[Bambu]: Encountered {datagram.src_address}:{datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} and did nothing with it?"
@@ -70,8 +69,6 @@ class Bambu(Handler):
 
             yield client
 
-    def _enqueue(self, client: WaitingClient) -> None:
+    def _enqueue(self, addr: str) -> None:
+        client = WaitingClient(addr)
         self.waiting_clients.append(client)
-
-        if len(self.waiting_clients) > 255:
-            self.waiting_clients.popleft()
