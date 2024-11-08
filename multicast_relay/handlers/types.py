@@ -1,0 +1,9 @@
+from typing import Callable, Protocol
+
+from multicast_relay.datagrams.raw import RawDatagram, UDPDatagram
+
+
+class Handler(Protocol):
+    def __init__(self, transmit: Callable[[UDPDatagram], None]): ...
+    def can_handle_datagram(self, datagram: RawDatagram) -> bool: ...
+    def handle(self, datagram: UDPDatagram) -> UDPDatagram: ...
