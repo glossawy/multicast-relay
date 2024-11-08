@@ -1,6 +1,4 @@
 from dataclasses import dataclass
-from pydoc import cli
-from typing import Generator
 from multicast_relay import constants
 from multicast_relay.datagrams.raw import RawDatagram, UDPDatagram
 from multicast_relay.datagrams.ssdp import SSDPDatagram
@@ -48,7 +46,7 @@ class Bambu(Handler):
 
         return datagram
 
-    def _unique_waiting_clients(self) -> Generator[WaitingClient]:
+    def _unique_waiting_clients(self):
         returned_set: set[WaitingClient] = set()
 
         while len(self.waiting_clients) > 0:
