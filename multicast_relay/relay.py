@@ -355,7 +355,7 @@ class PacketRelay:
 
         if self.can_transmit_datagram(tx, dgram):
             self.logger.info(
-                f"Datagram transmission relayed from {dgram.src_address}:{dgram.src_port} to {dgram.dst_address}:{dgram.dst_port} ({dst_mac}) via {tx.interface}/{tx.addr}"
+                f"Datagram transmission relayed from {dgram.src_address}:{dgram.src_port} to {dgram.dst_address}:{dgram.dst_port} ({binascii.hexlify(dst_mac).decode()}) via {tx.interface}/{tx.addr}"
             )
             self.transmitPacket(tx.socket, tx.mac, dst_mac, dgram.payload)
 
