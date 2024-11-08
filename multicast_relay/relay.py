@@ -870,6 +870,8 @@ class PacketRelay:
                                         f"Could not translate {tx_dgram.dst_address} to a MAC address"
                                     )
 
+                            srcAddr = tx_dgram.src_address
+                            srcPort = tx_dgram.src_port
                             if tx.interface in self.masquerade:
                                 data = data[:12] + socket.inet_aton(tx.addr) + data[16:]
                                 srcAddr = tx.addr
