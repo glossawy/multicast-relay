@@ -835,15 +835,18 @@ class PacketRelay:
                                 and tx.interface not in self.ifFilter[net]
                             ):
                                 self.logger.info(
-                                    f"Dropping packet from {srcAddr}:{srcPort} related to {tx.interface} due to ifFilters"
+                                    f"Dropping packet from {tx_dgram.src_address}:{tx_dgram.src_port} related to {tx.interface} due to ifFilters"
                                 )
                                 transmit = False
                                 break
                         if not transmit:
                             continue
 
-                        if srcAddr == self.ssdpUnicastAddr and not self.onNetwork(
-                            srcAddr, tx.addr, tx.netmask
+                        if (
+                            tx_dgram.src_address == self.ssdpUnicastAddr
+                            and not self.onNetwork(
+                                tx_dgram.src_address, tx.addr, tx.netmask
+                            )
                         ):
                             continue
 
