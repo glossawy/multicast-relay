@@ -46,12 +46,12 @@ class PacketRelay:
         remoteRetry: bool,
         noRemoteRelay: bool,
         aes: str,
-        logger: logging.Logger | Logger,
+        logger: Logger,
         noQueryInterfaces: list[str],
         noAdvertiseInterfaces: list[str],
     ):
         self.interfaces = interfaces
-        self.handlers = [hdlcls(self.transmit_datagram) for hdlcls in handlers]
+        self.handlers = [hdlcls(logger, self.transmit_datagram) for hdlcls in handlers]
         self.noTransmitInterfaces = noTransmitInterfaces or []
         self.noAdvertiseInterfaces = noAdvertiseInterfaces or []
 
@@ -354,6 +354,9 @@ class PacketRelay:
             return
 
         if self.can_transmit_datagram(tx, dgram):
+            self.logger.info(
+                f"Datagram transmission relayed from {dgram.src_address}:{dgram.src_port} to {dgram.dst_address}:{dgram.dst_port} ({dst_mac}) via {tx.interface}/{tx.addr}"
+            )
             self.transmitPacket(tx.socket, tx.mac, dst_mac, dgram.payload)
 
     def can_transmit_datagram(self, tx: Transmitter, dgram: RawDatagram):

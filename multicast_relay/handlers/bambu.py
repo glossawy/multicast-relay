@@ -1,10 +1,13 @@
 from dataclasses import dataclass
+from typing import Callable
 from multicast_relay import constants
 from multicast_relay.datagrams.raw import RawDatagram, UDPDatagram
 from multicast_relay.datagrams.ssdp import SSDPDatagram
 from multicast_relay.handlers.types import Handler
 
 from collections import deque
+
+from multicast_relay.logging import Logger
 
 BAMBU_SSDP_PORTS = [1990, 2021]
 BAMBU_MCAST_PORT = 1990
@@ -17,7 +20,8 @@ class WaitingClient:
 
 
 class Bambu(Handler):
-    def __init__(self, transmit) -> None:
+    def __init__(self, logger: Logger, transmit: Callable[[RawDatagram], None]) -> None:
+        self.logger = logger
         self.transmit = transmit
         self.waiting_clients: deque[WaitingClient] = deque()
 
@@ -35,13 +39,21 @@ class Bambu(Handler):
             and datagram.dst_port in BAMBU_SSDP_PORTS
         ):
             for client in self._unique_waiting_clients():
-                self.transmit(
-                    datagram.with_different_dst(client.address, BAMBU_UNICAST_PORT)
+                tx_dgram = datagram.with_different_dst(
+                    client.address, BAMBU_UNICAST_PORT
                 )
+
+                self.logger.info(
+                    f"[Bambu]: Attempting to transmit to waiting client {client.address} at port {tx_dgram.dst_port} from {tx_dgram.src_address}:{tx_dgram.src_port}"
+                )
+                self.transmit(tx_dgram)
         elif (
             datagram.src_port != constants.SSDP_MCAST_PORT
             and datagram.dst_port in BAMBU_SSDP_PORTS
         ):
+            self.logger.info(
+                f"Enqueued waiting Bambu client as {datagram.src_address}:{datagram.src_port}"
+            )
             self._enqueue(WaitingClient(datagram.src_address))
 
         return datagram
