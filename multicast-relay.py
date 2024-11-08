@@ -2,6 +2,7 @@
 
 import argparse
 import http.server
+import json
 import os
 import sys
 import threading
@@ -228,10 +229,17 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
+    ifFilters: dict[str, list[str]]
+    if args.ifFilter:
+        with open("./ifFilter.json", "r", encoding="utf-8") as filters:
+            ifFilters = json.load(filters)
+    else:
+        ifFilters = {}
+
     packetRelay = PacketRelay(
         interfaces=args.interfaces,
         noTransmitInterfaces=args.noTransmitInterfaces,
-        ifFilter=args.ifFilter,
+        ifFilter=ifFilters,
         waitForIP=args.wait,
         ttl=args.ttl,
         handlers=handlers,
