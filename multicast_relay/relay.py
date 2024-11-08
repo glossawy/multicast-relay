@@ -623,6 +623,9 @@ class PacketRelay:
 
                     if len(valid_handlers) > 0:
                         tx_dgram = UDPDatagram(tx_dgram.payload)
+                        for hdlr in valid_handlers:
+                            hdlr.handle(tx_dgram)
+                        continue
                     elif (
                         self.mdnsForceUnicast
                         and orig_dgram.dst_address == constants.MDNS_MCAST_ADDR

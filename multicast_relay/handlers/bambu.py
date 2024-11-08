@@ -14,7 +14,7 @@ BAMBU_MCAST_PORT = 1990
 BAMBU_UNICAST_PORT = 2021
 
 
-@dataclass
+@dataclass(eq=True, frozen=True)
 class WaitingClient:
     address: str
 
@@ -27,17 +27,13 @@ class Bambu(Handler):
 
     def can_handle_datagram(self, datagram: RawDatagram) -> bool:
         return (
-            isinstance(datagram, SSDPDatagram)
-            and "BAMBULAB-COM" in datagram.content
+            "BAMBULAB-COM" in SSDPDatagram(datagram.payload).content
             and datagram.dst_address == constants.SSDP_MCAST_ADDR
             and datagram.dst_port in BAMBU_SSDP_PORTS
         )
 
     def handle(self, datagram: UDPDatagram) -> UDPDatagram:
-        if (
-            datagram.src_port == constants.SSDP_MCAST_ADDR
-            and datagram.dst_port in BAMBU_SSDP_PORTS
-        ):
+        if datagram.src_port == constants.SSDP_MCAST_PORT:
             for client in self._unique_waiting_clients():
                 tx_dgram = datagram.with_different_dst(
                     client.address, BAMBU_UNICAST_PORT
@@ -47,14 +43,17 @@ class Bambu(Handler):
                     f"[Bambu]: Attempting to transmit to waiting client {client.address} at port {tx_dgram.dst_port} from {tx_dgram.src_address}:{tx_dgram.src_port}"
                 )
                 self.transmit(tx_dgram)
-        elif (
-            datagram.src_port != constants.SSDP_MCAST_PORT
-            and datagram.dst_port in BAMBU_SSDP_PORTS
-        ):
+
+            self.waiting_clients.clear()
+        elif datagram.src_port != constants.SSDP_MCAST_PORT:
             self.logger.info(
                 f"Enqueued waiting Bambu client as {datagram.src_address}:{datagram.src_port}"
             )
             self._enqueue(WaitingClient(datagram.src_address))
+        else:
+            self.logger.info(
+                f"[Bambu]: Encountered {datagram.src_address}:{datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} and did nothing with it?"
+            )
 
         return datagram
 
