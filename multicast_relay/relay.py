@@ -1,6 +1,4 @@
-from dataclasses import dataclass
 import errno
-import logging
 import socket
 import struct
 import sys
@@ -8,7 +6,7 @@ import time
 import binascii
 import re
 import select
-from typing import Iterable, Type, cast
+from typing import Iterable, OrderedDict, Type, cast
 
 from multicast_relay import constants
 from multicast_relay.datagrams.mdns import MDNSDatagram
@@ -51,7 +49,7 @@ class PacketRelay:
         noAdvertiseInterfaces: list[str],
     ):
         self.interfaces = interfaces
-        self.handlers = [hdlcls(logger, self.transmit_datagram) for hdlcls in handlers]
+        self.handlers = handlers
         self.noTransmitInterfaces = noTransmitInterfaces or []
         self.noAdvertiseInterfaces = noAdvertiseInterfaces or []
 
@@ -67,7 +65,7 @@ class PacketRelay:
         self.nif = netifaces
         self.logger = logger
 
-        self.transmitters: list[Transmitter] = []
+        self.transmitters: set[Transmitter] = set()
         self.receivers: list[Receiver] = []
         self.receiverInterfaces: dict[Receiver, str] = {}
         self.etherAddrs: dict[str, bytes | None] = {}
@@ -199,26 +197,14 @@ class PacketRelay:
                 )
 
                 if interface not in self.noTransmitInterfaces:
-                    tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-                    tx.bind((ifname, 0))
-
-                    transmitter = Transmitter(
-                        relay=Transmitter.Relay(addr, port),
-                        interface=ifname,
-                        addr=ip,
-                        mac=mac,
-                        netmask=netmask,
-                        broadcast=broadcast,
-                        socket=tx,
-                        service=service,
+                    self.register_transmitter(
+                        ifname, via=Transmitter.Relay(addr, port), service=service
                     )
-
-                    self.transmitters.append(transmitter)
 
         elif self.isBroadcast(addr):
             # For broadcast, similar handling
             for interface in self.interfaces:
-                (ifname, mac, ip, netmask, broadcast) = self.getInterface(interface)
+                (ifname, *_rest) = self.getInterface(interface)
                 rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -232,22 +218,9 @@ class PacketRelay:
                 )
 
                 if interface not in self.noTransmitInterfaces:
-                    tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-                    tx.bind((ifname, 0))
-
-                    transmitter = Transmitter(
-                        relay=Transmitter.Relay(broadcast, port),
-                        interface=ifname,
-                        addr=ip,
-                        mac=mac,
-                        netmask=netmask,
-                        broadcast=broadcast,
-                        socket=tx,
-                        service=service,
+                    self.register_transmitter(
+                        ifname, via=Transmitter.Relay(addr, port), service=service
                     )
-
-                    self.transmitters.append(transmitter)
-
         else:
             # Unicast handling
             for interface in self.interfaces:
@@ -266,26 +239,14 @@ class PacketRelay:
                 )
 
                 if interface not in self.noTransmitInterfaces:
-                    tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-                    tx.bind((ifname, 0))
-
-                    transmitter = Transmitter(
-                        relay=Transmitter.Relay(addr, port),
-                        interface=ifname,
-                        addr=ip,
-                        mac=mac,
-                        netmask=netmask,
-                        broadcast=broadcast,
-                        socket=tx,
-                        service=service,
+                    self.register_transmitter(
+                        ifname, via=Transmitter.Relay(addr, port), service=service
                     )
-
-                    self.transmitters.append(transmitter)
 
         self.bindings.add((addr, port))
 
     @staticmethod
-    def unicastIpToMac(ip: str, procNetArp: str | None = None) -> str | None:
+    def unicastIpToMac(ip: str, procNetArp: str | None = None) -> bytes | None:
         """
         Return the mac address (as a string) of ip
         If procNetArp is not None, then it will be used instead
@@ -310,7 +271,12 @@ class PacketRelay:
         ip2mac: dict = dict([t[0:2] for t in matches])
 
         # Default to None if key not in dict
-        return ip2mac.get(ip, None)
+        mac_addr = ip2mac.get(ip, None)
+
+        if mac_addr is None:
+            return None
+        else:
+            return binascii.unhexlify(mac_addr.replace(":", ""))
 
     def register_ip_checksum(self, checksum: int) -> None:
         self.recentChecksums.append(checksum)
@@ -338,26 +304,66 @@ class PacketRelay:
         checksum = ~checksum & 0xFFFF
         return udpHeader[:6] + struct.pack("!H", checksum)
 
-    def transmit_datagram(self, dgram: RawDatagram):
-        tx = self.find_transmitter(dgram.dst_address)
-        dst_mac = self.find_mac_addr(dgram.dst_address)
+    def _handler_transmit(self, handler: Type[Handler], receiving_socket: Receiver):
+        def _transmit(datagram: RawDatagram):
+            eligible_interfaces = set(self.interfaces) - set(
+                [self.getReceivingInterface(receiving_socket)]
+            )
 
-        if tx is None:
-            self.logger.info(
-                f"Skipping transmission to {dgram.dst_address}:{dgram.dst_port} since no transmitter was found."
-            )
-            return
-        if dst_mac is None:
-            self.logger.info(
-                f"Cannot resolve a MAC address for {dgram.dst_address}:{dgram.dst_port}."
-            )
-            return
+            transmissions: list[tuple[Transmitter, bytes]] = []
+            dst_mac: bytes | None = None
 
-        if self.can_transmit_datagram(tx, dgram):
-            self.logger.info(
-                f"Datagram transmission relayed from {dgram.src_address}:{dgram.src_port} to {dgram.dst_address}:{dgram.dst_port} ({binascii.hexlify(dst_mac).decode()}) via {tx.interface}/{tx.addr}"
+            if PacketRelay.isMulticast(datagram.dst_address):
+                dst_mac = self.multicastIpToMac(datagram.dst_address)
+                for tx in self.eligible_transmitters(receiving_socket):
+                    if (
+                        tx.relay.addr == datagram.dst_address
+                        and tx.relay.port == datagram.dst_port
+                        and not self.onNetwork(
+                            datagram.dst_address, tx.addr, tx.netmask
+                        )
+                    ):
+                        transmissions.append((tx, dst_mac))
+            elif PacketRelay.isBroadcast(datagram.dst_address):
+                dst_mac = self.broadcastIpToMac(datagram.dst_address)
+                for tx in self.eligible_transmitters(receiving_socket):
+                    if (
+                        tx.relay.addr == datagram.dst_address
+                        and tx.relay.port == datagram.dst_port
+                        and not self.onNetwork(
+                            datagram.dst_address, tx.addr, tx.netmask
+                        )
+                    ):
+                        transmissions.append((tx, dst_mac))
+            else:
+                dst_mac = self.interfaceIpToMac(datagram.dst_address)
+                if dst_mac is None:
+                    dst_mac = self.unicastIpToMac(datagram.dst_address)
+
+                if dst_mac is not None:
+                    for tx in self.eligible_transmitters(receiving_socket):
+                        if self.can_transmit_datagram(tx, datagram):
+                            transmissions.append((tx, dst_mac))
+                            # One interface may have many relays, we only need to send a request once
+                            # to an interface IP or unicast IP
+                            break
+
+            for tx, dst_mac in transmissions:
+                self.logger.info(
+                    f"[{handler.identifier}]: Transmitted packet from {datagram.src_address}:{datagram.src_port} to {datagram.dst_address}:{datagram.dst_port} ({binascii.hexlify(dst_mac).decode().upper()}) on {tx.interface} ({binascii.hexlify(tx.mac).decode().upper()})"
+                )
+                self.transmitPacket(tx.socket, tx.mac, dst_mac, datagram.payload)
+
+            missed_interfaces = eligible_interfaces - set(
+                tx.interface for (tx, _) in transmissions
             )
-            self.transmitPacket(tx.socket, tx.mac, dst_mac, dgram.payload)
+
+            if any(missed_interfaces):
+                self.logger.info(
+                    f"Could not transmit packet from {datagram.src_address}:{datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} on interfaces {','.join(missed_interfaces)}"
+                )
+
+        return _transmit
 
     def can_transmit_datagram(self, tx: Transmitter, dgram: RawDatagram):
         for net in self.ifFilter:
@@ -385,22 +391,15 @@ class PacketRelay:
 
         return True
 
-    def find_mac_addr(self, addr: str) -> bytes | None:
-        if addr in self.ip_mac_map:
-            return self.ip_mac_map[addr]
-        else:
-            mac = PacketRelay.unicastIpToMac(addr)
-            if mac:
-                return binascii.unhexlify(mac.replace(":", ""))
-            else:
-                return None
+    def interfaceIpToMac(self, addr: str) -> bytes | None:
+        return self.ip_mac_map.get(addr, None)
 
-    def find_transmitter(self, dst_addr: str) -> Transmitter | None:
+    def eligible_transmitters(self, receiver: Receiver):
+        recieving_interface = self.getReceivingInterface(receiver)
+
         for tx in self.transmitters:
-            if self.onNetwork(dst_addr, tx.addr, tx.netmask):
-                return tx
-
-        return None
+            if tx.interface != recieving_interface:
+                yield tx
 
     def transmitPacket(
         self,
@@ -624,7 +623,9 @@ class PacketRelay:
                     if len(valid_handlers) > 0:
                         tx_dgram = UDPDatagram(tx_dgram.payload)
                         for hdlr in valid_handlers:
-                            hdlr.handle(tx_dgram)
+                            hdlr(self.logger, self._handler_transmit(hdlr, s)).handle(
+                                tx_dgram
+                            )
                         continue
                     elif (
                         self.mdnsForceUnicast
@@ -701,12 +702,8 @@ class PacketRelay:
                                     # Destination is router's own IP address
                                     destMac = self.ip_mac_map[entry.addr]
                                 else:
-                                    destMacAddr = PacketRelay.unicastIpToMac(entry.addr)
-                                    if destMacAddr:
-                                        destMac = binascii.unhexlify(
-                                            destMacAddr.replace(":", "")
-                                        )
-                                    else:
+                                    destMac = PacketRelay.unicastIpToMac(entry.addr)
+                                    if not destMac:
                                         self.logger.info(
                                             "DEBUG: could not resolve mac for %s"
                                             % entry.addr
@@ -925,10 +922,16 @@ class PacketRelay:
                                             socket.AF_PACKET, socket.SOCK_RAW
                                         )
                                         s.bind((ifname, 0))
-                                        tx.mac = mac
-                                        tx.netmask = netmask
-                                        tx.addr = ip
-                                        tx.socket = s
+                                        tx = Transmitter(
+                                            relay=tx.relay,
+                                            broadcast=tx.broadcast,
+                                            service=tx.service,
+                                            interface=tx.interface,
+                                            mac=mac,
+                                            netmask=netmask,
+                                            addr=ip,
+                                            socket=s,
+                                        )
                                         self.transmitPacket(
                                             tx.socket,
                                             tx.mac,
@@ -944,6 +947,45 @@ class PacketRelay:
                                         "Error sending packet: %s" % str(e)
                                     )
                                 continue  # Skip to next transmitter
+
+    def register_transmitter(
+        self,
+        interface: str,
+        *,
+        via: Transmitter.Relay,
+        service: str,
+        sock: socket.socket | None = None,
+    ) -> None:
+        (name, mac_bytes, ip, netmask, broadcast) = self.getInterface(interface)
+
+        def _register(tx: Transmitter, *, source: str | None = None) -> None:
+            if tx in self.transmitters:
+                return
+
+            prefix = f"[{source}] " if source is not None else ""
+
+            self.logger.info(
+                f"{prefix}Will transmit relayed messages from {tx.relay.addr}:{tx.relay.port} to {tx.addr}/{tx.netmask} via {tx.interface} ({binascii.hexlify(tx.mac).decode().upper()})"
+            )
+
+            self.transmitters.add(tx)
+
+        if sock is None:
+            sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+            sock.bind((name, 0))
+
+        tx = Transmitter(
+            relay=via,
+            interface=name,
+            addr=ip,
+            mac=mac_bytes,
+            netmask=netmask,
+            broadcast=broadcast,
+            socket=sock,
+            service=service,
+        )
+
+        _register(tx)
 
     def getInterface(self, interface: str) -> tuple[str, bytes, str, str, str]:
         ifname = None

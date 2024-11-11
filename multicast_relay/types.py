@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 
-@dataclass
+@dataclass(eq=True, frozen=True)
 class Transmitter:
-    @dataclass
+    @dataclass(eq=True, frozen=True)
     class Relay:
         addr: str
         port: int

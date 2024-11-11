@@ -18,16 +18,6 @@ from multicast_relay.logging import Logger
 # Al Smith <ajs@aeschi.eu> January 2018
 # https://github.com/alsmith/multicast-relay
 
-# {
-#     "relay": {"addr": "239.255.255.250", "port": 1900},
-#     "interface": "br3",
-#     "addr": "192.168.3.1",
-#     "mac": b"*pNe\x0c,",
-#     "netmask": "255.255.255.0",
-#     "broadcast": "192.168.3.255",
-#     "service": "SSDP",
-# }
-
 
 class K8sCheck(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
