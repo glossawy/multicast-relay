@@ -1,29 +1,18 @@
 from email.headerregistry import Address
-import select
-from struct import pack
-from threading import local
-from tracemalloc import start
-from turtle import back
 import anyio
 import anyio.streams
 import trio
 from trio import socket
 from dataclasses import dataclass
-import enum
 import functools
 import ipaddress
-from ssl import SOCK_STREAM, SOL_SOCKET
-from sys import maxsize
 import macaddress
 from socket import (
-    AF_INET,
     IP_ADD_MEMBERSHIP,
-    IPPROTO_UDP,
     SO_BINDTODEVICE,
     SO_REUSEADDR,
-    SOCK_DGRAM,
-    SOCK_RAW,
     SOL_IP,
+    SOL_SOCKET
 )
 # import socket
 import netifaces
