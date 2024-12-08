@@ -6,7 +6,7 @@ import time
 import binascii
 import re
 import select
-from typing import Iterable, OrderedDict, Type, cast
+from typing import Iterable, Protocol, Type, cast
 
 from multicast_relay import constants
 from multicast_relay.datagrams.mdns import MDNSDatagram
@@ -21,6 +21,10 @@ from multicast_relay.crypto import Cipher
 from multicast_relay.logging import Logger
 from multicast_relay.datagrams.raw import RawDatagram, UDPDatagram
 from multicast_relay.types import Receiver, RemoteAddr, SSDPQuerier, Transmitter
+
+
+class HasErrno(Protocol):
+    errno: int
 
 
 class PacketRelay:
@@ -85,7 +89,8 @@ class PacketRelay:
                 if not components[1].isdigit():
                     raise ValueError("--listen netmask is not an integer")
                 if int(components[1]) not in range(0, 33):
-                    raise ValueError("--listen netmask specifies an invalid netmask")
+                    raise ValueError(
+                        "--listen netmask specifies an invalid netmask")
                 self.listenAddr.append(components)
 
         self.listenSock = None
@@ -114,7 +119,8 @@ class PacketRelay:
 
         if self.listenAddr:
             self.listenSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.listenSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.listenSock.setsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.listenSock.bind(("0.0.0.0", self.remotePort))
             self.listenSock.listen(0)
         elif self.remoteAddrs:
@@ -136,7 +142,8 @@ class PacketRelay:
             ):
                 return
 
-            remoteConnection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            remoteConnection = socket.socket(
+                socket.AF_INET, socket.SOCK_STREAM)
             remoteConnection.setblocking(False)
             self.logger.info("REMOTE: Connecting to remote %s" % remote.addr)
             remote.connecting = True
@@ -183,12 +190,16 @@ class PacketRelay:
             # For each interface, create a socket bound to that interface
             for interface in self.interfaces:
                 (ifname, mac, ip, netmask, broadcast) = self.getInterface(interface)
-                rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+                rx = socket.socket(
+                    socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                mreq = struct.pack("4s4s", socket.inet_aton(addr), socket.inet_aton(ip))
-                rx.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                mreq = struct.pack("4s4s", socket.inet_aton(
+                    addr), socket.inet_aton(ip))
+                rx.setsockopt(socket.IPPROTO_IP,
+                              socket.IP_ADD_MEMBERSHIP, mreq)
                 rx.setsockopt(
-                    socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode("utf-8")
+                    socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode(
+                        "utf-8")
                 )
                 rx.bind((addr, port))
                 self.receivers.append(rx)
@@ -205,11 +216,13 @@ class PacketRelay:
             # For broadcast, similar handling
             for interface in self.interfaces:
                 (ifname, *_rest) = self.getInterface(interface)
-                rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+                rx = socket.socket(
+                    socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                 rx.setsockopt(
-                    socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode("utf-8")
+                    socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode(
+                        "utf-8")
                 )
                 rx.bind(("0.0.0.0", port))
                 self.receivers.append(rx)
@@ -227,10 +240,12 @@ class PacketRelay:
                 (ifname, mac, ip, netmask, broadcast) = self.getInterface(interface)
 
                 # Create a receiver socket per interface
-                rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+                rx = socket.socket(
+                    socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 rx.setsockopt(
-                    socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode("utf-8")
+                    socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode(
+                        "utf-8")
                 )
                 rx.bind((addr, port))
                 self.receivers.append(rx)
@@ -289,14 +304,15 @@ class PacketRelay:
             "!BBH", 0, ipHeader[9], len(udpHeader) + len(data)
         )
 
-        udpPacket = pseudoIPHeader + udpHeader[:6] + struct.pack("!H", 0) + data
+        udpPacket = pseudoIPHeader + \
+            udpHeader[:6] + struct.pack("!H", 0) + data
         if len(udpPacket) % 2:
             udpPacket += struct.pack("!B", 0)
 
         # Recompute the UDP header checksum
         checksum = 0
         for i in range(0, len(udpPacket), 2):
-            checksum += struct.unpack("!H", udpPacket[i : i + 2])[0]
+            checksum += struct.unpack("!H", udpPacket[i: i + 2])[0]
 
         while checksum > 0xFFFF:
             checksum = (checksum & 0xFFFF) + (checksum >> 16)
@@ -350,9 +366,11 @@ class PacketRelay:
 
             for tx, dst_mac in transmissions:
                 self.logger.info(
-                    f"[{handler.identifier}]: Transmitted packet from {datagram.src_address}:{datagram.src_port} to {datagram.dst_address}:{datagram.dst_port} ({binascii.hexlify(dst_mac).decode().upper()}) on {tx.interface} ({binascii.hexlify(tx.mac).decode().upper()})"
+                    f"[{handler.identifier}]: Transmitted packet from {datagram.src_address}:{datagram.src_port} to {datagram.dst_address}:{
+                        datagram.dst_port} ({binascii.hexlify(dst_mac).decode().upper()}) on {tx.interface} ({binascii.hexlify(tx.mac).decode().upper()})"
                 )
-                self.transmitPacket(tx.socket, tx.mac, dst_mac, datagram.payload)
+                self.transmitPacket(tx.socket, tx.mac,
+                                    dst_mac, datagram.payload)
 
             missed_interfaces = eligible_interfaces - set(
                 tx.interface for (tx, _) in transmissions
@@ -360,7 +378,8 @@ class PacketRelay:
 
             if any(missed_interfaces):
                 self.logger.info(
-                    f"Could not transmit packet from {datagram.src_address}:{datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} on interfaces {','.join(missed_interfaces)}"
+                    f"Could not transmit packet from {datagram.src_address}:{datagram.src_port} -> {
+                        datagram.dst_address}:{datagram.dst_port} on interfaces {','.join(missed_interfaces)}"
                 )
 
         return _transmit
@@ -377,7 +396,8 @@ class PacketRelay:
                 and tx.interface not in self.ifFilter[net]
             ):
                 self.logger.info(
-                    f"Dropping packet from {dgram.src_address}:{dgram.src_port} related to {tx.interface} due to ifFilters"
+                    f"Dropping packet from {dgram.src_address}:{
+                        dgram.src_port} related to {tx.interface} due to ifFilters"
                 )
                 return False
 
@@ -385,7 +405,8 @@ class PacketRelay:
             dgram.src_address, tx.addr, tx.netmask
         ):
             self.logger.info(
-                f"Dropping packet from {dgram.src_address}:{dgram.src_port} for {tx.interface}, SSDP unicast not on network"
+                f"Dropping packet from {dgram.src_address}:{dgram.src_port} for {
+                    tx.interface}, SSDP unicast not on network"
             )
             return False
 
@@ -419,10 +440,12 @@ class PacketRelay:
 
         for boundary in range(0, len(raw_dgram.udp_payload), self.udpMaxLength):
             data_fragment = raw_dgram.udp_payload[
-                boundary : boundary + self.udpMaxLength
+                boundary: boundary + self.udpMaxLength
             ]
-            total_len = len(raw_dgram.ip_header) + len(udp_header) + len(data_fragment)
-            more_fragments = boundary + self.udpMaxLength < len(raw_dgram.udp_payload)
+            total_len = len(raw_dgram.ip_header) + \
+                len(udp_header) + len(data_fragment)
+            more_fragments = boundary + \
+                self.udpMaxLength < len(raw_dgram.udp_payload)
 
             flag_offset = boundary & 0x1FFF
             if more_fragments:
@@ -441,7 +464,8 @@ class PacketRelay:
             ip_packet_fragment = calculate_ip_checksum(
                 ip_header + udp_header + data_fragment
             )
-            self.register_ip_checksum(RawDatagram(ip_packet_fragment).ip_checksum)
+            self.register_ip_checksum(
+                RawDatagram(ip_packet_fragment).ip_checksum)
 
             try:
                 if srcMac != binascii.unhexlify("00:00:00:00:00:00".replace(":", "")):
@@ -452,7 +476,7 @@ class PacketRelay:
                 else:
                     sock.send(ip_packet_fragment)
             except Exception as e:
-                if hasattr(e, "errno") and e.errno == errno.ENXIO:
+                if hasattr(e, "errno") and cast(HasErrno, e).errno == errno.ENXIO:
                     raise
                 else:
                     self.logger.info("Error sending packet: %s" % str(e))
@@ -515,7 +539,8 @@ class PacketRelay:
                         try:
                             (data, _) = s.recvfrom(2, socket.MSG_WAITALL)
                         except socket.error as e:
-                            self.logger.info("REMOTE: Connection closed (%s)" % str(e))
+                            self.logger.info(
+                                "REMOTE: Connection closed (%s)" % str(e))
                             self.removeConnection(s)
                             continue
 
@@ -529,7 +554,8 @@ class PacketRelay:
                         try:
                             (packet, _) = s.recvfrom(size, socket.MSG_WAITALL)
                         except socket.error as e:
-                            self.logger.info("REMOTE: Connection closed (%s)" % str(e))
+                            self.logger.info(
+                                "REMOTE: Connection closed (%s)" % str(e))
                             self.removeConnection(s)
                             continue
 
@@ -538,11 +564,12 @@ class PacketRelay:
                         magic = packet[: len(constants.MAGIC)]
                         addr = socket.inet_ntoa(
                             packet[
-                                len(constants.MAGIC) : len(constants.MAGIC)
+                                len(constants.MAGIC): len(constants.MAGIC)
                                 + constants.IPV4LEN
                             ]
                         )
-                        data = packet[len(constants.MAGIC) + constants.IPV4LEN :]
+                        data = packet[len(constants.MAGIC) +
+                                      constants.IPV4LEN:]
 
                         if magic != constants.MAGIC:
                             self.logger.info(
@@ -632,7 +659,8 @@ class PacketRelay:
                         and orig_dgram.dst_address == constants.MDNS_MCAST_ADDR
                         and orig_dgram.dst_port == constants.MDNS_MCAST_PORT
                     ):
-                        tx_dgram = MDNSDatagram(tx_dgram.payload).with_unicast_bit()
+                        tx_dgram = MDNSDatagram(
+                            tx_dgram.payload).with_unicast_bit()
 
                     # Handle SSDP M-SEARCH requests
                     elif (
@@ -702,7 +730,8 @@ class PacketRelay:
                                     # Destination is router's own IP address
                                     destMac = self.ip_mac_map[entry.addr]
                                 else:
-                                    destMac = PacketRelay.unicastIpToMac(entry.addr)
+                                    destMac = PacketRelay.unicastIpToMac(
+                                        entry.addr)
                                     if not destMac:
                                         self.logger.info(
                                             "DEBUG: could not resolve mac for %s"
@@ -753,7 +782,7 @@ class PacketRelay:
                                     )
                                 )
                             except Exception as e:
-                                if hasattr(e, "errno") and e.errno == errno.ENXIO:
+                                if hasattr(e, "errno") and cast(HasErrno, e).errno == errno.ENXIO:
                                     try:
                                         (ifname, mac, ip, netmask, broadcast) = (
                                             self.getInterface(tx.interface)
@@ -762,10 +791,16 @@ class PacketRelay:
                                             socket.AF_PACKET, socket.SOCK_RAW
                                         )
                                         s.bind((ifname, 0))
-                                        tx.mac = mac
-                                        tx.netmask = netmask
-                                        tx.addr = ip
-                                        tx.socket = s
+                                        tx = Transmitter(
+                                            relay=tx.relay,
+                                            interface=tx.interface,
+                                            addr=ip,
+                                            mac=mac,
+                                            netmask=netmask,
+                                            socket=s,
+                                            broadcast=tx.broadcast,
+                                            service=tx.service,
+                                        )
                                         self.transmitPacket(
                                             tx.socket,
                                             tx.mac,
@@ -788,10 +823,12 @@ class PacketRelay:
                     # Determine if the packet is a query from an interface we should not relay queries from
 
                     is_mdns_query = (
-                        isinstance(tx_dgram, MDNSDatagram) and tx_dgram.is_mdns_query
+                        isinstance(
+                            tx_dgram, MDNSDatagram) and tx_dgram.is_mdns_query
                     )
                     is_ssdp_query = (
-                        isinstance(tx_dgram, SSDPDatagram) and tx_dgram.is_query
+                        isinstance(
+                            tx_dgram, SSDPDatagram) and tx_dgram.is_query
                     )
 
                     if (
@@ -838,7 +875,8 @@ class PacketRelay:
                                 and tx.interface not in self.ifFilter[net]
                             ):
                                 self.logger.info(
-                                    f"Dropping packet from {tx_dgram.src_address}:{tx_dgram.src_port} related to {tx.interface} due to ifFilters"
+                                    f"Dropping packet from {tx_dgram.src_address}:{
+                                        tx_dgram.src_port} related to {tx.interface} due to ifFilters"
                                 )
                                 transmit = False
                                 break
@@ -870,13 +908,15 @@ class PacketRelay:
                                 )
                                 if destMac is None:
                                     raise RuntimeError(
-                                        f"Could not translate {tx_dgram.dst_address} to a MAC address"
+                                        f"Could not translate {
+                                            tx_dgram.dst_address} to a MAC address"
                                     )
 
                             srcAddr = tx_dgram.src_address
                             srcPort = tx_dgram.src_port
                             if tx.interface in self.masquerade:
-                                data = data[:12] + socket.inet_aton(tx.addr) + data[16:]
+                                data = data[:12] + \
+                                    socket.inet_aton(tx.addr) + data[16:]
                                 srcAddr = tx.addr
                             asSrc = (
                                 ""
@@ -913,7 +953,7 @@ class PacketRelay:
                                     tx_dgram.payload,
                                 )
                             except Exception as e:
-                                if hasattr(e, "errno") and e.errno == errno.ENXIO:
+                                if hasattr(e, "errno") and cast(HasErrno, e).errno == errno.ENXIO:
                                     try:
                                         (ifname, mac, ip, netmask, broadcast) = (
                                             self.getInterface(tx.interface)
@@ -965,7 +1005,8 @@ class PacketRelay:
             prefix = f"[{source}] " if source is not None else ""
 
             self.logger.info(
-                f"{prefix}Will transmit relayed messages from {tx.relay.addr}:{tx.relay.port} to {tx.addr}/{tx.netmask} via {tx.interface} ({binascii.hexlify(tx.mac).decode().upper()})"
+                f"{prefix}Will transmit relayed messages from {tx.relay.addr}:{tx.relay.port} to {
+                    tx.addr}/{tx.netmask} via {tx.interface} ({binascii.hexlify(tx.mac).decode().upper()})"
             )
 
             self.transmitters.add(tx)
@@ -1044,7 +1085,7 @@ class PacketRelay:
                 time.sleep(1)
 
             ip = addrs[self.nif.AF_INET][0]["addr"]
-            netmask = addrs[self.nif.AF_INET][0]["netmask"]
+            netmask = addrs[self.nif.AF_INET][0]["mask"]
 
             ipLong = PacketRelay.ip2long(ip)
             netmaskLong = PacketRelay.ip2long(netmask)

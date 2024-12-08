@@ -16,5 +16,5 @@ class Netifaces:
     def interfaces(self):
         return netifaces.interfaces()
 
-    def ifaddresses(self, interface):
+    def ifaddresses(self, interface: str):
         return netifaces.ifaddresses(interface)
