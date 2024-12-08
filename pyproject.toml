@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "multicast-relay"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pycryptodome = "^3.21.0"
+netifaces2 = "^0.0.22"
+typer = "^0.13.0"
+macaddress = "^2.0.2"
+trio = "^0.27.0"
+anyio = "^4.6.2.post1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
