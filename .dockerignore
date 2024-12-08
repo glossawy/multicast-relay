@@ -1,0 +1,11 @@
+.devcontainer/
+.mypy_cache/
+.venv/
+.venev/
+.vscode/
+
+openwrt-python-encodings/
+
+LICENSE
+README-*.md
+test_*.py
