@@ -1,4 +1,5 @@
 import errno
+from operator import isub
 import socket
 import struct
 import sys
@@ -7,6 +8,9 @@ import binascii
 import re
 import select
 from typing import Iterable, Protocol, Type, cast
+
+from netifaces import interfaces
+from ping3 import ping
 
 from multicast_relay import constants
 from multicast_relay.datagrams.mdns import MDNSDatagram
@@ -260,6 +264,21 @@ class PacketRelay:
 
         self.bindings.add((addr, port))
 
+    def mac_addr_from_unicast_ip(self, ip: str, attempt_ping: bool = True) -> bytes | None:
+        macaddr = self.interfaceIpToMac(ip)
+
+        if macaddr is None:
+            macaddr = PacketRelay.unicastIpToMac(ip)
+
+        # ICMP requests *should* populate ARP table for finding the MAC address
+        if macaddr is None and attempt_ping:
+            self.logger.info(
+                f'Sending ICMP ping to all interfaces to find MAC for {ip}')
+            self.ping_interfaces(ip)
+            macaddr = PacketRelay.unicastIpToMac(ip)
+
+        return macaddr
+
     @staticmethod
     def unicastIpToMac(ip: str, procNetArp: str | None = None) -> bytes | None:
         """
@@ -293,6 +312,11 @@ class PacketRelay:
         else:
             return binascii.unhexlify(mac_addr.replace(":", ""))
 
+    def ping_interfaces(self, ip: str) -> None:
+        for iface in self.interfaces:
+            self.logger.info(f'Sending ICMP ping to {iface}')
+            ping(ip, interface=iface)
+
     def register_ip_checksum(self, checksum: int) -> None:
         self.recentChecksums.append(checksum)
         if len(self.recentChecksums) > 256:
@@ -322,14 +346,23 @@ class PacketRelay:
 
     def _handler_transmit(self, handler: Type[Handler], receiving_socket: Receiver):
         def _transmit(datagram: RawDatagram):
-            eligible_interfaces = set(self.interfaces) - set(
-                [self.getReceivingInterface(receiving_socket)]
-            )
+            transmitted = []
 
-            transmissions: list[tuple[Transmitter, bytes]] = []
-            dst_mac: bytes | None = None
+            def _process_transmission(tx: Transmitter, dst_mac: bytes) -> None:
+                self.logger.info(
+                    f"[{handler.identifier}]: Packet transmitted from {datagram.src_address}:{datagram.src_port} to {datagram.dst_address}:{
+                        datagram.dst_port} ({binascii.hexlify(dst_mac).decode().upper()}) on {tx.interface}/{tx.addr} ({binascii.hexlify(tx.mac).decode().upper()})"
+                )
+
+                self.transmitPacket(tx.socket, tx.mac,
+                                    dst_mac, datagram.payload)
+                transmitted.append(tx)
+
+            self.logger.info(f'Evaluating transmission for packet going to {
+                             self.getReceivingInterface(receiving_socket)}')
 
             if PacketRelay.isMulticast(datagram.dst_address):
+                self.logger.info('Processing as multicast packet')
                 dst_mac = self.multicastIpToMac(datagram.dst_address)
                 for tx in self.eligible_transmitters(receiving_socket):
                     if (
@@ -339,8 +372,9 @@ class PacketRelay:
                             datagram.dst_address, tx.addr, tx.netmask
                         )
                     ):
-                        transmissions.append((tx, dst_mac))
+                        _process_transmission(tx, dst_mac)
             elif PacketRelay.isBroadcast(datagram.dst_address):
+                self.logger.info('Processing as broadcast packet')
                 dst_mac = self.broadcastIpToMac(datagram.dst_address)
                 for tx in self.eligible_transmitters(receiving_socket):
                     if (
@@ -350,37 +384,33 @@ class PacketRelay:
                             datagram.dst_address, tx.addr, tx.netmask
                         )
                     ):
-                        transmissions.append((tx, dst_mac))
+                        _process_transmission(tx, dst_mac)
             else:
+                self.logger.info('Processing as unicast packet')
                 dst_mac = self.interfaceIpToMac(datagram.dst_address)
                 if dst_mac is None:
-                    dst_mac = self.unicastIpToMac(datagram.dst_address)
+                    dst_mac = self.mac_addr_from_unicast_ip(
+                        datagram.dst_address)
 
+                self.logger.info(f'Mapped {datagram.dst_address} to {
+                                 binascii.hexlify(dst_mac).decode().upper() if dst_mac is not None else 'None'}')
                 if dst_mac is not None:
                     for tx in self.eligible_transmitters(receiving_socket):
                         if self.can_transmit_datagram(tx, datagram):
-                            transmissions.append((tx, dst_mac))
+                            _process_transmission(tx, dst_mac)
+
+                            self.logger.info(
+                                'Skipping all other interfaces to avoid duplicate packets to unicast address')
+
                             # One interface may have many relays, we only need to send a request once
                             # to an interface IP or unicast IP
                             break
+                else:
+                    self.logg
 
-            for tx, dst_mac in transmissions:
-                self.logger.info(
-                    f"[{handler.identifier}]: Transmitted packet from {datagram.src_address}:{datagram.src_port} to {datagram.dst_address}:{
-                        datagram.dst_port} ({binascii.hexlify(dst_mac).decode().upper()}) on {tx.interface} ({binascii.hexlify(tx.mac).decode().upper()})"
-                )
-                self.transmitPacket(tx.socket, tx.mac,
-                                    dst_mac, datagram.payload)
-
-            missed_interfaces = eligible_interfaces - set(
-                tx.interface for (tx, _) in transmissions
-            )
-
-            if any(missed_interfaces):
-                self.logger.info(
-                    f"Could not transmit packet from {datagram.src_address}:{datagram.src_port} -> {
-                        datagram.dst_address}:{datagram.dst_port} on interfaces {','.join(missed_interfaces)}"
-                )
+            if len(transmitted) == 0:
+                self.logger.info(f'Failed to transmit packet {datagram.src_address}:{
+                                 datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} on any interface')
 
         return _transmit
 
@@ -407,6 +437,15 @@ class PacketRelay:
             self.logger.info(
                 f"Dropping packet from {dgram.src_address}:{dgram.src_port} for {
                     tx.interface}, SSDP unicast not on network"
+            )
+            return False
+
+        if PacketRelay.isUnicast(dgram.src_address) and not self.onNetwork(
+            dgram.dst_address, tx.addr, tx.netmask
+        ):
+            self.logger.info(
+                f"{tx.interface} cannot transmit packet since {
+                    dgram.dst_address} is not on the network"
             )
             return False
 
@@ -644,7 +683,7 @@ class PacketRelay:
                     valid_handlers = [
                         handler
                         for handler in self.handlers
-                        if handler.can_handle_datagram(tx_dgram)
+                        if handler.can_handle_datagram(self.logger, tx_dgram)
                     ]
 
                     if len(valid_handlers) > 0:
@@ -730,7 +769,7 @@ class PacketRelay:
                                     # Destination is router's own IP address
                                     destMac = self.ip_mac_map[entry.addr]
                                 else:
-                                    destMac = PacketRelay.unicastIpToMac(
+                                    destMac = self.mac_addr_from_unicast_ip(
                                         entry.addr)
                                     if not destMac:
                                         self.logger.info(
@@ -1140,6 +1179,10 @@ class PacketRelay:
         Is this IP address a broadcast address?
         """
         return ip == constants.BROADCAST
+
+    @staticmethod
+    def isUnicast(ip: str) -> bool:
+        return not PacketRelay.isMulticast(ip) and not PacketRelay.isBroadcast(ip)
 
     @staticmethod
     def ip2long(ip: str) -> int:
