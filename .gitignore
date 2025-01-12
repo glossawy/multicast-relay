@@ -6,3 +6,5 @@ __pycache__
 .venv/
 .venev/
 .mypy_cache/
+.idea
+

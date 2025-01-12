@@ -7,13 +7,8 @@ from dataclasses import dataclass
 import functools
 import ipaddress
 import macaddress
-from socket import (
-    IP_ADD_MEMBERSHIP,
-    SO_BINDTODEVICE,
-    SO_REUSEADDR,
-    SOL_IP,
-    SOL_SOCKET
-)
+from socket import IP_ADD_MEMBERSHIP, SO_BINDTODEVICE, SO_REUSEADDR, SOL_IP, SOL_SOCKET
+
 # import socket
 import netifaces
 import rich.style
@@ -42,7 +37,7 @@ valid_interfaces = netifaces.interfaces()
 NetifacesAddressEntry: TypeAlias = dict[netifaces.defs.AddressType, str]
 InterfaceName = NewType("InterfaceName", str)
 AddressPair: TypeAlias = tuple[str, int]
-SniffedPacket: TypeAlias = tuple['Interface', InetUdpPacket]
+SniffedPacket: TypeAlias = tuple["Interface", InetUdpPacket]
 
 
 # Source -> Drain -> Sink
@@ -61,8 +56,7 @@ class Interface:
         entry = self.addresses(Interface.Types.AF_INET)[0]
 
         if entry is None:
-            raise LookupError(
-                f"{self.name} does not have an asssigned IPv4 address")
+            raise LookupError(f"{self.name} does not have an asssigned IPv4 address")
 
         return ipaddress.IPv4Interface(f'{entry["addr"]}/{entry['mask']}')
 
@@ -120,11 +114,19 @@ def interface_info(interface: str):
     )
 
 
-async def start_multicast_sniffer(local_addr: AddressPair, interface: Interface, chan: trio.MemorySendChannel[SniffedPacket]):
+async def start_multicast_sniffer(
+    local_addr: AddressPair,
+    interface: Interface,
+    chan: trio.MemorySendChannel[SniffedPacket],
+):
     with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP) as sock:
         sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        sock.setsockopt(SOL_IP, IP_ADD_MEMBERSHIP, socket.inet_aton(
-            local_addr[0]) + socket.inet_aton(str(interface.ipv4_address.ip)))
+        sock.setsockopt(
+            SOL_IP,
+            IP_ADD_MEMBERSHIP,
+            socket.inet_aton(local_addr[0])
+            + socket.inet_aton(str(interface.ipv4_address.ip)),
+        )
         sock.setsockopt(SOL_SOCKET, SO_BINDTODEVICE, interface.name.encode())
 
         await sock.bind(local_addr)
@@ -133,16 +135,20 @@ async def start_multicast_sniffer(local_addr: AddressPair, interface: Interface,
             packet, (src_addr, src_port) = await sock.recvfrom(65535)
             inet_dgram = InetUdpPacket(packet)
 
-            print(f'{src_addr}:{src_port} ({interface.name}) => {inet_dgram.src_ip}:{
-                  inet_dgram.src_port} -> {inet_dgram.dst_ip}:{inet_dgram.dst_port}')
+            print(
+                f"{src_addr}:{src_port} ({interface.name}) => {inet_dgram.src_ip}:{
+                  inet_dgram.src_port} -> {inet_dgram.dst_ip}:{inet_dgram.dst_port}"
+            )
 
             await chan.send((interface, inet_dgram))
 
 
 async def start_mock_traffic(local_addr: AddressPair, interface: Interface):
-    async with await anyio.create_udp_socket(socket.AF_INET, local_host='127.0.0.1') as udp:
+    async with await anyio.create_udp_socket(
+        socket.AF_INET, local_host="127.0.0.1"
+    ) as udp:
         while True:
-            await udp.send(('This is a test message'.encode(), local_addr))
+            await udp.send(("This is a test message".encode(), local_addr))
             await anyio.sleep(5)
 
 
@@ -150,15 +156,22 @@ async def relay_between_interfaces(interfaces: list[Interface]):
     send, recv = trio.open_memory_channel[SniffedPacket](0)
 
     async with anyio.create_task_group() as tg:
-        tg.start_soon(start_mock_traffic, (constants.SSDP_MCAST_ADDR,
-                      constants.SSDP_MCAST_PORT), interfaces[0])
+        tg.start_soon(
+            start_mock_traffic,
+            (constants.SSDP_MCAST_ADDR, constants.SSDP_MCAST_PORT),
+            interfaces[0],
+        )
 
         for iface in interfaces:
-            tg.start_soon(start_multicast_sniffer,
-                          (constants.SSDP_MCAST_ADDR, constants.SSDP_MCAST_PORT), iface, send.clone())
+            tg.start_soon(
+                start_multicast_sniffer,
+                (constants.SSDP_MCAST_ADDR, constants.SSDP_MCAST_PORT),
+                iface,
+                send.clone(),
+            )
 
-        async for (interface, dgram) in recv:
-            print(f'{dgram.src_ip} -> {dgram.dst_ip} on {interface.name}')
+        async for interface, dgram in recv:
+            print(f"{dgram.src_ip} -> {dgram.dst_ip} on {interface.name}")
             print(repr(dgram))
             print(dgram.udp_datagram.data.decode())
 
