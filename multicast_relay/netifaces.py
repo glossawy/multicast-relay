@@ -7,7 +7,7 @@ class Netifaces:
 
     @property
     def AF_LINK(self) -> int:
-        return netifaces.AF_LINK
+        return netifaces.AF_PACKET
 
     @property
     def AF_INET(self) -> int:

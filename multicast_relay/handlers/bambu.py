@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from collections import OrderedDict
 from datetime import datetime, timedelta
+import os
 from typing import Callable
 from multicast_relay import constants
 from multicast_relay.datagrams.raw import RawDatagram, UDPDatagram
@@ -16,6 +17,8 @@ BAMBU_SEARCH_PORT = 1990
 BAMBU_ANSWER_PORT = 2021
 
 MAX_WAIT_BEFORE_REMOVAL = timedelta(minutes=5)
+
+VERY_VERBOSE = os.environ.get('VERY_VERBOSE_BAMBU_BUS', None) is not None
 
 
 @dataclass(eq=True, frozen=True)
@@ -37,17 +40,51 @@ class Bambu(Handler):
         register(constants.SSDP_MCAST_ADDR)
 
     @staticmethod
-    def can_handle_datagram(datagram: RawDatagram) -> bool:
-        return (
-            "BAMBULAB-COM" in SSDPDatagram(datagram.payload).content
-            and datagram.dst_address == constants.SSDP_MCAST_ADDR
-        )
+    def can_handle_datagram(logger: Logger, datagram: RawDatagram) -> bool:
+        logger.info(f'[Bambu]: CHECK - Received {datagram.src_address}:{
+                    datagram.src_port} destined for {datagram.dst_address}:{datagram.dst_port}')
+
+        logger.info(
+            f'[Bambu]: CHECK - Attempting to interpret as SSDP message')
+
+        ssdp_message = SSDPDatagram(datagram.payload)
+
+        if VERY_VERBOSE:
+            logger.info("[Bambu]: CHECK - SSDP Message Payload START")
+            for line in ssdp_message.content.splitlines():
+                logger.info(line)
+            logger.info("[Bambu]: CHECK - SSDP Message Payload END")
+
+        if "BAMBULAB-COM" not in ssdp_message.content:
+            logger.info(
+                '[Bambu]: CHECK - SSDP message missing magic text, ignoring')
+            return False
+
+        if datagram.dst_address != constants.SSDP_MCAST_ADDR:
+            logger.info(
+                f'[Bambu]: CHECK - Destination is not {
+                    constants.SSDP_MCAST_ADDR} (SSDP MCAST), ignoring'
+            )
+            return False
+
+        if VERY_VERBOSE:
+            if datagram.src_port == constants.SSDP_MCAST_PORT:
+                logger.info(f'[Bambu]: CHECK - source port is {constants.SSDP_MCAST_PORT} and destination address is {
+                            constants.SSDP_MCAST_ADDR}, this seems like a NOTIFY message from a printer')
+            else:
+                logger.info(
+                    f'[Bambu]: CHECK - source port is random, seems likely to be M-SEARCH')
+
+        logger.info(f'[Bambu]: CHECK - Accepting {datagram.src_address}:{
+                    datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} for processing')
+        return True
 
     def handle(self, datagram: UDPDatagram) -> UDPDatagram:
         if datagram.src_port == constants.SSDP_MCAST_PORT:
             if len(_waiting_list) == 0:
                 self.logger.info(
-                    f"[Bambu]: No waiting M-SEARCH requests, forwarding NOTIFY to {constants.SSDP_MCAST_ADDR}:{constants.SSDP_MCAST_PORT}"
+                    f"[Bambu]: No waiting M-SEARCH requests, forwarding NOTIFY to {
+                        constants.SSDP_MCAST_ADDR}:{constants.SSDP_MCAST_PORT}"
                 )
                 self.transmit(
                     datagram.with_different_dst(
@@ -61,7 +98,8 @@ class Bambu(Handler):
                     )
 
                     self.logger.info(
-                        f"[Bambu]: Attempting to transmit to waiting client {client.address} at port {tx_dgram.dst_port} from {tx_dgram.src_address}:{tx_dgram.src_port}"
+                        f"[Bambu]: Attempting to transmit to waiting client {client.address} at port {
+                            tx_dgram.dst_port} from {tx_dgram.src_address}:{tx_dgram.src_port}"
                     )
 
                     self.transmit(tx_dgram)
@@ -69,7 +107,8 @@ class Bambu(Handler):
             self._enqueue(datagram.src_address)
         else:
             self.logger.info(
-                f"[Bambu]: Encountered {datagram.src_address}:{datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} and did nothing with it?"
+                f"[Bambu]: Encountered {datagram.src_address}:{
+                    datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} and did nothing with it?"
             )
 
         return datagram
@@ -85,7 +124,8 @@ class Bambu(Handler):
 
         _waiting_list[client] = datetime.now()
         if is_new:
-            self.logger.info(f"[Bambu]: Enqueued waiting Bambu client for {addr}")
+            self.logger.info(
+                f"[Bambu]: Enqueued waiting Bambu client for {addr}")
 
         self._clear_old_entries()
 

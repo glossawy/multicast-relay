@@ -12,7 +12,7 @@
     "ghcr.io/nikobockerman/devcontainer-features/poetry-persistent-cache:1": {},
     "ghcr.io/nils-geistmann/devcontainers-features/zsh:0": {
       "setLocale": true,
-      "theme": "agnoster",
+      "theme": "robbyrussell",
       "plugins": "git docker",
       "desiredLocale": "en_US.UTF-8 UTF-8"
     },
@@ -21,6 +21,9 @@
       "version": "latest"
     },
     "ghcr.io/devcontainers-extra/features/ruff:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers-extra/features/ufmt:1": {
       "version": "latest"
     }
   },

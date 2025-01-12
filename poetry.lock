@@ -248,6 +248,20 @@ files = [
 attrs = ">=19.2.0"
 
 [[package]]
+name = "ping3"
+version = "4.0.8"
+description = "A pure python3 version of ICMP ping implementation using raw socket."
+optional = false
+python-versions = ">=3.5"
+files = [
+    {file = "ping3-4.0.8-py3-none-any.whl", hash = "sha256:b5c294851968b4229e9af69d252778241cb84221594b436a8677419c31925594"},
+    {file = "ping3-4.0.8.tar.gz", hash = "sha256:9ab460eb57f006b71f977a693d157215aabd6bbcbc6cd6428b6951eaae0c2875"},
+]
+
+[package.extras]
+dev = ["build", "twine"]
+
+[[package]]
 name = "pycparser"
 version = "2.22"
 description = "C parser in Python"
@@ -414,4 +428,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "3ffc0d3b7cdb7767d72e27db1d9153a1694d570ee30d7905a765a0f9e6c4d84c"
+content-hash = "940223e4d770e384bf356e40325d3efc19fda7f0cdf624665231cce299f19ca4"

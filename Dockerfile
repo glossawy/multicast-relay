@@ -12,9 +12,9 @@ WORKDIR /app
 
 COPY pyproject.toml poetry.lock README.md ./
 
-RUN --mount=type=cache,target=/tmp/poetry_cache poetry install --without dev --no-root
+RUN --mount=type=cache,target=/tmp/poetry_cache poetry install --no-root
 
-FROM python:3-alpine as runtime
+FROM python:3-alpine AS runtime
 
 ENV VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:$PATH"
@@ -22,6 +22,7 @@ ENV VIRTUAL_ENV=/app/.venv \
 WORKDIR /app
 
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
-COPY ./multicast-relay.py ./ssdpDiscover.py ./multicast_relay /app/
+COPY ./multicast-relay.py ./ssdpDiscover.py /app/
+COPY ./multicast_relay /app/multicast_relay
 
 ENTRYPOINT [ "python", "multicast-relay.py", "--foreground" ]
