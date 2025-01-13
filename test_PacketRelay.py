@@ -1,3 +1,5 @@
+# type: ignore
+
 #
 # unit tests using the py.test framework
 #
@@ -25,7 +27,7 @@ def test_net_checksum_ipv4():
         # 192.168.1.1 -> 192.168.1.196 UDP DNS response
         (0xc000, "\x45\x00\x00\xb4\xf6\x22\x40\x00\x40\x11\xc0\x00\xc0\xa8" \
             "\x01\x01\xc0\xa8\x01\xc4"),
-        )
+    )
 
     for (cksum, ip_header) in ipv4_header_tests:
         assert cksum == mr.PacketRelay.net_checksum(ip_header[:10]
@@ -72,10 +74,11 @@ def test_net_checksum_udp():
                  "\x73\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00" \
                  "\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x78\x00\x04\xd8\x3a\xd4" \
                  "\x4e\x00\x00\x29\x10\x00\x00\x00\x00\x00\x00"),
-        )
+    )
 
     for (cksum, udp_header) in udp_pseudo_header_tests:
-        assert cksum == mr.PacketRelay.net_checksum(udp_header[:18] + struct.pack('!H', 0) + udp_header[20:])
+        assert cksum == mr.PacketRelay.net_checksum(
+            udp_header[:18] + struct.pack('!H', 0) + udp_header[20:])
         assert 0 == mr.PacketRelay.net_checksum(udp_header)
 
 
@@ -84,9 +87,12 @@ def test_unicast_ip2mac_str():
 192.168.0.1      0x1         0x2         30:65:EC:6F:C4:58     *        eth0
 192.168.0.2      0x1         0x2         30:65:ec:6f:c4:59     *        eth0"""
 
-    assert mr.PacketRelay.unicast_ip2mac_str("192.168.0.1", proc_net_arp_content=arp) == "30:65:EC:6F:C4:58"
-    assert mr.PacketRelay.unicast_ip2mac_str("192.168.0.2", proc_net_arp_content=arp) == "30:65:ec:6f:c4:59"
-    assert mr.PacketRelay.unicast_ip2mac_str("172.16.5.1", proc_net_arp_content=arp) is None
+    assert mr.PacketRelay.unicast_ip2mac_str(
+        "192.168.0.1", proc_net_arp_content=arp) == "30:65:EC:6F:C4:58"
+    assert mr.PacketRelay.unicast_ip2mac_str(
+        "192.168.0.2", proc_net_arp_content=arp) == "30:65:ec:6f:c4:59"
+    assert mr.PacketRelay.unicast_ip2mac_str(
+        "172.16.5.1", proc_net_arp_content=arp) is None
 
 
 def test_modify_udp_packet():

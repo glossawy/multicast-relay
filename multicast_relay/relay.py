@@ -1,3 +1,4 @@
+# type: ignore
 import errno
 from operator import isub
 import socket
@@ -405,8 +406,6 @@ class PacketRelay:
                             # One interface may have many relays, we only need to send a request once
                             # to an interface IP or unicast IP
                             break
-                else:
-                    self.logg
 
             if len(transmitted) == 0:
                 self.logger.info(f'Failed to transmit packet {datagram.src_address}:{

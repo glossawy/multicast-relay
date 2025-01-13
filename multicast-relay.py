@@ -6,7 +6,6 @@ import json
 import os
 import sys
 import threading
-from typing import Type
 
 from multicast_relay import constants
 from multicast_relay.handlers import bambu
@@ -143,9 +142,11 @@ def main():
         type=int,
         help="Run k8s liveness/readiness server on the given port.",
     )
-    parser.add_argument("--foreground", action="store_true", help="Do not background.")
+    parser.add_argument("--foreground", action="store_true",
+                        help="Do not background.")
     parser.add_argument("--logfile", help="Save logs to this file.")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output.")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Enable verbose output.")
     parser.add_argument(
         "--noAdvertiseInterfaces",
         nargs="+",
@@ -182,30 +183,34 @@ def main():
 
     logger = Logger(args.foreground, args.logfile, args.verbose)
 
-    handlers: set[Type[Handler]] = set()
-    relays = set()
+    handlers: set[type[Handler]] = set()
+    relays: set[tuple[str, str | None]] = set()
     if not args.noMDNS:
         relays.add(
             (
-                "%s:%d" % (constants.MDNS_MCAST_ADDR, constants.MDNS_MCAST_PORT),
+                "%s:%d" % (constants.MDNS_MCAST_ADDR,
+                           constants.MDNS_MCAST_PORT),
                 "mDNS",
             )
         )
     if not args.noSSDP:
         relays.add(
             (
-                "%s:%d" % (constants.SSDP_MCAST_ADDR, constants.SSDP_MCAST_PORT),
+                "%s:%d" % (constants.SSDP_MCAST_ADDR,
+                           constants.SSDP_MCAST_PORT),
                 "SSDP",
             )
         )
     if not args.noBambuDiscovery:
         for port in [constants.SSDP_MCAST_PORT, *constants.BAMBU_PORTS]:
             if port != 1900 or args.noSSDP:
-                relays.add((f"{constants.SSDP_MCAST_ADDR}:{port}", "Bambu Labs"))
+                relays.add(
+                    (f"{constants.SSDP_MCAST_ADDR}:{port}", "Bambu Labs"))
         handlers.add(bambu.Bambu)
     if not args.noSonosDiscovery:
         relays.add(("%s:%d" % (constants.BROADCAST, 1900), "Sonos Discovery"))
-        relays.add(("%s:%d" % (constants.BROADCAST, 6969), "Sonos Setup Discovery"))
+        relays.add(("%s:%d" % (constants.BROADCAST, 6969),
+                   "Sonos Setup Discovery"))
 
     if args.ssdpUnicastAddr:
         relays.add(
