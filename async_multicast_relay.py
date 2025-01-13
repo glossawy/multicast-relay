@@ -1,12 +1,8 @@
-from email.headerregistry import Address
 import anyio
 import anyio.streams
 import trio
 from trio import socket
-from dataclasses import dataclass
-import functools
-import ipaddress
-import macaddress
+import netaddr
 from socket import IP_ADD_MEMBERSHIP, SO_BINDTODEVICE, SO_REUSEADDR, SOL_IP, SOL_SOCKET
 
 # import socket
@@ -18,63 +14,24 @@ import typer
 import rich
 import rich.columns
 import rich.constrain
-from typing import Annotated, NewType, TypeAlias, cast
+from typing import Annotated, TypeAlias
 
-from multicast_relay import constants, relay
-from multicast_relay.aio.datagram import InetUdpPacket
-from multicast_relay.datagrams.mdns import MDNSDatagram
-from multicast_relay.datagrams.ssdp import SSDPDatagram
-from multicast_relay.handlers.bambu import Bambu
+from multicast_relay import constants
+from multicast_relay.aio.inet import InetPacket, Interface, InterfaceName, UdpDatagram
+
 
 app = typer.Typer(no_args_is_help=True)
 
 interfaces_app = typer.Typer()
 relay_app = typer.Typer()
 
-
-valid_interfaces = netifaces.interfaces()
-
-NetifacesAddressEntry: TypeAlias = dict[netifaces.defs.AddressType, str]
-InterfaceName = NewType("InterfaceName", str)
 AddressPair: TypeAlias = tuple[str, int]
-SniffedPacket: TypeAlias = tuple["Interface", InetUdpPacket]
+SniffedPacket: TypeAlias = tuple[Interface, UdpDatagram]
 
 
 # Source -> Drain -> Sink
 # e.g. Bambu SSDP Source -> Bambu Handler -> Relay Sink (Sends out to all interfaces except source interface)
 #      MDNS Source -> Query/Announcement
-
-
-@dataclass(eq=True, frozen=True)
-class Interface:
-    Types = netifaces.InterfaceType
-
-    name: InterfaceName
-
-    @functools.cached_property
-    def ipv4_address(self) -> ipaddress.IPv4Interface:
-        entry = self.addresses(Interface.Types.AF_INET)[0]
-
-        if entry is None:
-            raise LookupError(f"{self.name} does not have an asssigned IPv4 address")
-
-        return ipaddress.IPv4Interface(f'{entry["addr"]}/{entry['mask']}')
-
-    @functools.cached_property
-    def mac_address(self) -> macaddress.MAC:
-        entry = self.addresses(Interface.Types.AF_PACKET)[0]
-
-        if entry is None:
-            raise LookupError(f"{self.name} is missing a MAC address")
-
-        return macaddress.MAC(entry["addr"])
-
-    @functools.lru_cache(maxsize=32)
-    def addresses(
-        self, af_type: netifaces.InterfaceType
-    ) -> list[NetifacesAddressEntry]:
-        return netifaces.ifaddresses(self.name).get(af_type, [])
-
 
 @interfaces_app.command("list")
 def list_interfaces():
@@ -125,7 +82,7 @@ async def start_multicast_sniffer(
             SOL_IP,
             IP_ADD_MEMBERSHIP,
             socket.inet_aton(local_addr[0])
-            + socket.inet_aton(str(interface.ipv4_address.ip)),
+            + socket.inet_aton(str(interface.addresses.ip4)),
         )
         sock.setsockopt(SOL_SOCKET, SO_BINDTODEVICE, interface.name.encode())
 
@@ -133,11 +90,16 @@ async def start_multicast_sniffer(
 
         while True:
             packet, (src_addr, src_port) = await sock.recvfrom(65535)
-            inet_dgram = InetUdpPacket(packet)
+            inet_dgram = InetPacket.parse(packet).into(UdpDatagram)
+
+            if inet_dgram is None:
+                print(f"{src_addr}:{src_port} ({
+                      interface.name}) => Received unexpected IP packet, could not interpret as UDP Datagram")
+                continue
 
             print(
-                f"{src_addr}:{src_port} ({interface.name}) => {inet_dgram.src_ip}:{
-                  inet_dgram.src_port} -> {inet_dgram.dst_ip}:{inet_dgram.dst_port}"
+                f"{src_addr}:{src_port} ({interface.name}) => {inet_dgram.source_ip}:{
+                    inet_dgram.source_port} -> {inet_dgram.destination_ip}:{inet_dgram.destination_port}"
             )
 
             await chan.send((interface, inet_dgram))
@@ -171,9 +133,9 @@ async def relay_between_interfaces(interfaces: list[Interface]):
             )
 
         async for interface, dgram in recv:
-            print(f"{dgram.src_ip} -> {dgram.dst_ip} on {interface.name}")
+            print(f"{dgram.source_ip} -> {dgram.destination_ip} on {interface.name}")
             print(repr(dgram))
-            print(dgram.udp_datagram.data.decode())
+            print(dgram.data.decode())
 
 
 def construct_interface(iface_name: str) -> Interface:
@@ -197,14 +159,14 @@ def construct_interface(iface_name: str) -> Interface:
         raise typer.Exit(code=1)
     else:
         try:
-            macaddress.MAC(mac_addresses[0]["addr"])
+            netaddr.EUI(mac_addresses[0]["addr"])
         except ValueError as exc:
             print(
                 f"{iface_name} is not a valid interface for relay, MAC address exists but cannot be parsed."
             )
             raise typer.Exit(code=1) from exc
 
-    return Interface(cast(InterfaceName, iface_name))
+    return Interface(InterfaceName(iface_name))
 
 
 @relay_app.command()
