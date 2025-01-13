@@ -1,11 +1,10 @@
 import anyio
-import anyio.streams
-import trio
-from trio import socket
+from trio import socket as tsocket
+from anyio.streams.memory import MemoryObjectSendStream
+
 import netaddr
 from socket import IP_ADD_MEMBERSHIP, SO_BINDTODEVICE, SO_REUSEADDR, SOL_IP, SOL_SOCKET
 
-# import socket
 import netifaces
 import rich.style
 import rich.text
@@ -14,7 +13,7 @@ import typer
 import rich
 import rich.columns
 import rich.constrain
-from typing import Annotated, TypeAlias
+from typing import Annotated, NoReturn, TypeAlias
 
 from multicast_relay import constants
 from multicast_relay.aio.inet import InetPacket, Interface, InterfaceName, UdpDatagram
@@ -32,6 +31,7 @@ SniffedPacket: TypeAlias = tuple[Interface, UdpDatagram]
 # Source -> Drain -> Sink
 # e.g. Bambu SSDP Source -> Bambu Handler -> Relay Sink (Sends out to all interfaces except source interface)
 #      MDNS Source -> Query/Announcement
+
 
 @interfaces_app.command("list")
 def list_interfaces():
@@ -74,15 +74,15 @@ def interface_info(interface: str):
 async def start_multicast_sniffer(
     local_addr: AddressPair,
     interface: Interface,
-    chan: trio.MemorySendChannel[SniffedPacket],
-):
-    with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP) as sock:
+    chan: MemoryObjectSendStream[SniffedPacket],
+) -> NoReturn:
+    with tsocket.socket(tsocket.AF_INET, tsocket.SOCK_RAW, tsocket.IPPROTO_UDP) as sock:
         sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         sock.setsockopt(
             SOL_IP,
             IP_ADD_MEMBERSHIP,
-            socket.inet_aton(local_addr[0])
-            + socket.inet_aton(str(interface.addresses.ip4)),
+            tsocket.inet_aton(local_addr[0])
+            + tsocket.inet_aton(str(interface.addresses.ip4)),
         )
         sock.setsockopt(SOL_SOCKET, SO_BINDTODEVICE, interface.name.encode())
 
@@ -93,13 +93,17 @@ async def start_multicast_sniffer(
             inet_dgram = InetPacket.parse(packet).into(UdpDatagram)
 
             if inet_dgram is None:
-                print(f"{src_addr}:{src_port} ({
-                      interface.name}) => Received unexpected IP packet, could not interpret as UDP Datagram")
+                print(
+                    f"{src_addr}:{src_port} ({
+                        interface.name
+                    }) => Received unexpected IP packet, could not interpret as UDP Datagram"
+                )
                 continue
 
             print(
                 f"{src_addr}:{src_port} ({interface.name}) => {inet_dgram.source_ip}:{
-                    inet_dgram.source_port} -> {inet_dgram.destination_ip}:{inet_dgram.destination_port}"
+                    inet_dgram.source_port
+                } -> {inet_dgram.destination_ip}:{inet_dgram.destination_port}"
             )
 
             await chan.send((interface, inet_dgram))
@@ -107,7 +111,7 @@ async def start_multicast_sniffer(
 
 async def start_mock_traffic(local_addr: AddressPair, interface: Interface):
     async with await anyio.create_udp_socket(
-        socket.AF_INET, local_host="127.0.0.1"
+        tsocket.AF_INET, local_host="127.0.0.1"
     ) as udp:
         while True:
             await udp.send(("This is a test message".encode(), local_addr))
@@ -115,7 +119,7 @@ async def start_mock_traffic(local_addr: AddressPair, interface: Interface):
 
 
 async def relay_between_interfaces(interfaces: list[Interface]):
-    send, recv = trio.open_memory_channel[SniffedPacket](0)
+    send, recv = anyio.create_memory_object_stream[SniffedPacket]()
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(
@@ -182,7 +186,7 @@ def bambu(
 
     interfaces = [interface1, interface2, *interfaces]
 
-    trio.run(relay_between_interfaces, interfaces)
+    anyio.run(relay_between_interfaces, interfaces, backend="trio")
 
 
 if __name__ == "__main__":
