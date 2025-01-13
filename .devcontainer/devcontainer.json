@@ -22,6 +22,9 @@
     },
     "ghcr.io/devcontainers-extra/features/ufmt:1": {
       "version": "latest"
+    },
+    "ghcr.io/devcontainers-extra/features/mypy": {
+      "version": "latest"
     }
   },
   "capAdd": [
