@@ -1,4 +1,15 @@
 import socket
+from typing import Literal, LiteralString, NamedTuple
+from pypacker import pypacker
+
+class _SpecialMacAddress[T: LiteralString](NamedTuple):
+    as_str: T
+    as_bytes: bytes
+
+MAC_ADDR_UNKNOWN = MAC_ADDR_ZERO = _SpecialMacAddress(
+    "00:00:00:00:00:00",
+    b"\x00" * 6,
+)
 
 MULTICAST_MIN = "224.0.0.0"
 MULTICAST_MAX = "239.255.255.255"
