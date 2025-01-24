@@ -1,6 +1,6 @@
 # type: ignore
+from dataclasses import dataclass
 import errno
-from operator import isub
 import socket
 import struct
 import sys
@@ -8,10 +8,12 @@ import time
 import binascii
 import re
 import select
-from typing import Iterable, Protocol, Type, cast
+from typing import Iterable, Protocol, Type, cast, overload
 
-from netifaces import interfaces
-from ping3 import ping
+from datetime import datetime, timedelta
+import cachetools
+from pypacker import pypacker, psocket
+from pypacker.layer12 import arp, ethernet
 
 from multicast_relay import constants
 from multicast_relay.datagrams.mdns import MDNSDatagram
@@ -32,7 +34,27 @@ class HasErrno(Protocol):
     errno: int
 
 
+class _TTLCache[K, V](cachetools.TTLCache[K, V]):
+    def __init__(self, maxsize: int, ttl: timedelta) -> None:
+        return super().__init__(maxsize, ttl=ttl.total_seconds(), timer=lambda: datetime.now().timestamp())
+
+
+@dataclass(frozen=True, eq=True, kw_only=True)
+class _InterfaceRecord:
+    ifname: str
+    ip_address: str
+    mac_address: bytes
+    netmask: str
+    broadcast_address: str
+
+
+type InterfaceName = str
+type IpAddr = str
+type MacAddr = bytes
+
 class PacketRelay:
+    ARP_CACHE = _TTLCache[str, bytes](maxsize=10, ttl=timedelta(minutes=2))
+
     def __init__(
         self,
         interfaces: list[str],
@@ -58,6 +80,7 @@ class PacketRelay:
         noAdvertiseInterfaces: list[str],
     ):
         self.interfaces = interfaces
+        self.interface_records: dict[InterfaceName | IpAddr | MacAddr, _InterfaceRecord] = dict()
         self.handlers = handlers
         self.noTransmitInterfaces = noTransmitInterfaces or []
         self.noAdvertiseInterfaces = noAdvertiseInterfaces or []
@@ -130,10 +153,15 @@ class PacketRelay:
             self.listenSock.listen(0)
         elif self.remoteAddrs:
             self.connectRemotes()
-        self.ip_mac_map = {}
         for interface in self.interfaces:
             (ifname, mac, ip, netmask, broadcast) = self.getInterface(interface)
-            self.ip_mac_map[ip] = mac
+            self.interface_records[ifname] = self.interface_records[ip] = self.interface_records[mac] = (_InterfaceRecord(
+                ifname=ifname,
+                ip_address=ip,
+                mac_address=mac,
+                netmask=netmask,
+                broadcast_address=broadcast,
+            ))
 
     def connectRemotes(self):
         for remote in self.remoteAddrs:
@@ -266,22 +294,35 @@ class PacketRelay:
         self.bindings.add((addr, port))
 
     def mac_addr_from_unicast_ip(self, ip: str, attempt_ping: bool = True) -> bytes | None:
-        macaddr = self.interfaceIpToMac(ip)
+        # Return it if we know it
+        macaddr = PacketRelay.ARP_CACHE.get(ip)
+        if macaddr is not None:
+            return macaddr
 
+        # We know the addresses for local interfaces, they should not change either
+        interface_record = self.get_interface(ip_addr=ip)
+        if interface_record is not None:
+            return interface_record.mac_address
+
+        # Not an interface ip, but maybe it's already known in local ARP cache
         if macaddr is None:
-            macaddr = PacketRelay.unicastIpToMac(ip)
+            macaddr = PacketRelay.mac_addr_from_arp_table(ip)
 
-        # ICMP requests *should* populate ARP table for finding the MAC address
+        # Time to ask the networks directly
         if macaddr is None and attempt_ping:
             self.logger.info(
-                f'Sending ICMP ping to all interfaces to find MAC for {ip}')
-            self.ping_interfaces(ip)
-            macaddr = PacketRelay.unicastIpToMac(ip)
+                f'Sending ARP request to all interfaces to find MAC for {ip}')
+
+            macaddr = self.arp_ping_all_interfaces(ip)
+
+        if macaddr is not None:
+            self.logger.info(f"Caching MAC address for {ip} as {macaddr}")
+            PacketRelay.ARP_CACHE[ip] = macaddr
 
         return macaddr
 
     @staticmethod
-    def unicastIpToMac(ip: str, procNetArp: str | None = None) -> bytes | None:
+    def mac_addr_from_arp_table(ip: str, procNetArp: str | None = None) -> bytes | None:
         """
         Return the mac address (as a string) of ip
         If procNetArp is not None, then it will be used instead
@@ -313,10 +354,68 @@ class PacketRelay:
         else:
             return binascii.unhexlify(mac_addr.replace(":", ""))
 
-    def ping_interfaces(self, ip: str) -> None:
+    def arp_ping_all_interfaces(self, ip: str) -> bytes | None:
         for iface in self.interfaces:
-            self.logger.info(f'Sending ICMP ping to {iface}')
-            ping(ip, interface=iface)
+            self.logger.info(f'Attempting ARP request on {iface}')
+
+            mac_bytes = self._resolve_ip_to_mac_via_arp(iface, ip)
+            if mac_bytes is not None:
+                return mac_bytes
+
+    def _resolve_ip_to_mac_via_arp(self, ifname: str, target_ip: str) -> bytes | None:
+        _, iface_mac, iface_ip, iface_netmask, _ = self.getInterface(ifname)
+
+        if not self.onNetwork(target_ip, iface_ip, iface_netmask):
+            self.logger.info(f"Skipping ARP request on {ifname}, {target_ip} cant be on its network")
+            return None
+
+        iface_mac = pypacker.mac_bytes_to_str(iface_mac)
+        def arp_reply_only(pkt: ethernet.Ethernet) -> bool:
+            self.logger.info(f"Received packet on {ifname} ({iface_mac}) while awaiting ARP reply: Ethernet, {pkt.type_t} from {pkt.src_s} to {pkt.dst_s}")
+            self.logger.info(pkt.summarize())
+
+            # Must be ARP packet
+            if pkt.type_t != "ETH_TYPE_ARP":
+                return False
+
+            # Must be directed at us
+            if pkt.dst_s != iface_mac:
+                return False
+
+            # Must be a reply
+            arp_response = cast(arp.ARP | None, pkt[arp.ARP])
+            if arp_response is None or arp_response.tpa_s != iface_ip or arp_response.tha_s != iface_mac:
+                return False
+
+            # Reply from target, and hwaddr is not all zeroes
+            return arp_response.spa_s == target_ip and arp_response.sha_s != constants.MAC_ADDR_UNKNOWN.as_str
+
+        arp_pkt = ethernet.Ethernet(
+            src_s=iface_mac,
+            type=ethernet.ETH_TYPE_ARP
+        ) + \
+        arp.ARP(sha_s=iface_mac, spa_s=iface_ip, tpa_s=target_ip)
+
+        self.logger.info("Sending ARP Request:")
+        self.logger.info(arp_pkt.summarize())
+
+        sock = psocket.SocketHndl(ifname)
+        try:
+            for reply in sock.sr(arp_pkt, pfilter = arp_reply_only):
+                eth: ethernet.Ethernet = reply
+                arp_rep = cast(arp.ARP | None, eth[arp.ARP])
+
+                if arp_rep is None or arp_rep.sha_s == constants.MAC_ADDR_UNKNOWN.as_str:
+                    continue
+
+                self .logger.info(f"Received acceptable ARP reply from {arp_rep.sha_s} ({arp_rep.spa_s}) on {ifname}")
+
+                return pypacker.mac_str_to_bytes(arp_rep.sha_s)
+        except TimeoutError:
+            self.logger.info(f"No ARP reply received in time on {ifname} for {target_ip}")
+        finally:
+            sock.close()
+
 
     def register_ip_checksum(self, checksum: int) -> None:
         self.recentChecksums.append(checksum)
@@ -388,7 +487,7 @@ class PacketRelay:
                         _process_transmission(tx, dst_mac)
             else:
                 self.logger.info('Processing as unicast packet')
-                dst_mac = self.interfaceIpToMac(datagram.dst_address)
+                dst_mac = self.mac_addr_from_unicast_ip(datagram.dst_address)
                 if dst_mac is None:
                     dst_mac = self.mac_addr_from_unicast_ip(
                         datagram.dst_address)
@@ -449,9 +548,6 @@ class PacketRelay:
             return False
 
         return True
-
-    def interfaceIpToMac(self, addr: str) -> bytes | None:
-        return self.ip_mac_map.get(addr, None)
 
     def eligible_transmitters(self, receiver: Receiver):
         recieving_interface = self.getReceivingInterface(receiver)
@@ -764,18 +860,14 @@ class PacketRelay:
 
                             # Resolve destMac for dstAddr
                             try:
-                                if entry.addr in self.ip_mac_map:
-                                    # Destination is router's own IP address
-                                    destMac = self.ip_mac_map[entry.addr]
-                                else:
-                                    destMac = self.mac_addr_from_unicast_ip(
-                                        entry.addr)
-                                    if not destMac:
-                                        self.logger.info(
-                                            "DEBUG: could not resolve mac for %s"
-                                            % entry.addr
-                                        )
-                                        continue
+                                destMac = self.mac_addr_from_unicast_ip(
+                                    entry.addr)
+                                if not destMac:
+                                    self.logger.info(
+                                        "DEBUG: could not resolve mac for %s"
+                                        % entry.addr
+                                    )
+                                    continue
                             except Exception as e:
                                 self.logger.info(
                                     "DEBUG: exception while resolving mac of IP %s: %s"
@@ -1065,6 +1157,37 @@ class PacketRelay:
         )
 
         _register(tx)
+
+    @overload
+    def is_interface(self, *, ifname: str, ip_addr: None = ...) -> bool: ...
+    @overload
+    def is_interface(self, *, ip_addr: str, ifname: None = ...) -> bool: ...
+    @overload
+    def is_interface(self, *, mac_addr: bytes) -> bool: ...
+    @overload
+    def is_interface(self, *, iface: tuple[str, bytes, str, str, str]) -> bool: ...
+    def is_interface(self, **kwargs) -> bool:
+        return self.get_interface(**kwargs) is not None
+
+
+    @overload
+    def get_interface(self, *, ifname: str, ip_addr: None = ...) -> _InterfaceRecord | None: ...
+    @overload
+    def get_interface(self, *, ip_addr: str, ifname: None = ...) -> _InterfaceRecord | None: ...
+    @overload
+    def get_interface(self, *, mac_addr: bytes) -> _InterfaceRecord | None: ...
+    @overload
+    def get_interface(self, *, iface: tuple[str, bytes, str, str, str]) -> _InterfaceRecord | None: ...
+    def get_interface(self, *, ifname: str | None = None, ip_addr: str | None = None, mac_addr: bytes | None = None, iface: tuple[str, bytes, str, str, str] | None = None) -> _InterfaceRecord | None:
+        if iface is not None:
+            ifname = iface[0]
+
+        key = ifname if ifname is not None else \
+            ip_addr if ip_addr is not None else \
+            mac_addr
+
+        if key is not None:
+            return self.interface_records.get(key)
 
     def getInterface(self, interface: str) -> tuple[str, bytes, str, str, str]:
         ifname = None

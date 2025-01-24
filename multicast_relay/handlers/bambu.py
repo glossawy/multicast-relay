@@ -1,9 +1,9 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from collections import OrderedDict
 from datetime import datetime, timedelta
 import os
-from typing import Callable
+from cachetools import TTLCache
 from multicast_relay import constants
 from multicast_relay.datagrams.raw import RawDatagram, UDPDatagram
 from multicast_relay.datagrams.ssdp import SSDPDatagram
@@ -26,8 +26,7 @@ class _WaitingClient:
     address: str
 
 
-_waiting_list: OrderedDict[_WaitingClient, datetime] = OrderedDict()
-
+_waiting_list: TTLCache[_WaitingClient, datetime] = TTLCache(maxsize=10, ttl=MAX_WAIT_BEFORE_REMOVAL.total_seconds())
 
 class Bambu(Handler):
     identifier = "Bambu"
@@ -41,11 +40,13 @@ class Bambu(Handler):
 
     @staticmethod
     def can_handle_datagram(logger: Logger, datagram: RawDatagram) -> bool:
+        _waiting_list.expire()
+
         logger.info(f'[Bambu]: CHECK - Received {datagram.src_address}:{
                     datagram.src_port} destined for {datagram.dst_address}:{datagram.dst_port}')
 
         logger.info(
-            f'[Bambu]: CHECK - Attempting to interpret as SSDP message')
+            '[Bambu]: CHECK - Attempting to interpret as SSDP message')
 
         ssdp_message = SSDPDatagram(datagram.payload)
 
@@ -73,7 +74,7 @@ class Bambu(Handler):
                             constants.SSDP_MCAST_ADDR}, this seems like a NOTIFY message from a printer')
             else:
                 logger.info(
-                    f'[Bambu]: CHECK - source port is random, seems likely to be M-SEARCH')
+                    '[Bambu]: CHECK - source port is random, seems likely to be M-SEARCH')
 
         logger.info(f'[Bambu]: CHECK - Accepting {datagram.src_address}:{
                     datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} for processing')
@@ -110,6 +111,7 @@ class Bambu(Handler):
                 f"[Bambu]: Encountered {datagram.src_address}:{
                     datagram.src_port} -> {datagram.dst_address}:{datagram.dst_port} and did nothing with it?"
             )
+            _waiting_list.expire()
 
         return datagram
 
@@ -126,18 +128,3 @@ class Bambu(Handler):
         if is_new:
             self.logger.info(
                 f"[Bambu]: Enqueued waiting Bambu client for {addr}")
-
-        self._clear_old_entries()
-
-    def _clear_old_entries(self) -> None:
-        earliest_allowed = self._earliest_allowed_start_wait_time()
-        while len(_waiting_list) > 0:
-            (client, waiting_since) = _waiting_list.popitem(last=False)
-
-            if waiting_since >= earliest_allowed:
-                _waiting_list[client] = waiting_since
-                _waiting_list.move_to_end(client, last=False)
-                break
-
-    def _earliest_allowed_start_wait_time(self) -> datetime:
-        return datetime.now() - MAX_WAIT_BEFORE_REMOVAL

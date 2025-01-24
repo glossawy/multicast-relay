@@ -55,6 +55,18 @@ tests = ["cloudpickle", "hypothesis", "mypy (>=1.11.1)", "pympler", "pytest (>=4
 tests-mypy = ["mypy (>=1.11.1)", "pytest-mypy-plugins"]
 
 [[package]]
+name = "cachetools"
+version = "5.5.1"
+description = "Extensible memoizing collections and decorators"
+optional = false
+python-versions = ">=3.7"
+groups = ["main"]
+files = [
+    {file = "cachetools-5.5.1-py3-none-any.whl", hash = "sha256:b76651fdc3b24ead3c648bbdeeb940c1b04d365b38b4af66788f9ec4a81d42bb"},
+    {file = "cachetools-5.5.1.tar.gz", hash = "sha256:70f238fbba50383ef62e55c6aff6d9673175fe59f7c6782c7a0b9e38f4a9df95"},
+]
+
+[[package]]
 name = "cffi"
 version = "1.17.1"
 description = "Foreign Function Interface for Python calling C code."
@@ -177,6 +189,18 @@ files = [
 
 [package.extras]
 all = ["flake8 (>=7.1.1)", "mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2)"]
+
+[[package]]
+name = "macaddress"
+version = "2.0.2"
+description = "Like ``ipaddress``, but for hardware identifiers such as MAC addresses."
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "macaddress-2.0.2-py3-none-any.whl", hash = "sha256:6f4a0430f9b5af6d98a582b8d527ba2cd3f0825fce5503a9ce5c73acb772c30f"},
+    {file = "macaddress-2.0.2.tar.gz", hash = "sha256:1400ccdc28d747102d57ae61e5b78d8985872930810ceb8860cd49abd1e1fa37"},
+]
 
 [[package]]
 name = "markdown-it-py"
@@ -346,21 +370,6 @@ files = [
 
 [package.dependencies]
 attrs = ">=19.2.0"
-
-[[package]]
-name = "ping3"
-version = "4.0.8"
-description = "A pure python3 version of ICMP ping implementation using raw socket."
-optional = false
-python-versions = ">=3.5"
-groups = ["main"]
-files = [
-    {file = "ping3-4.0.8-py3-none-any.whl", hash = "sha256:b5c294851968b4229e9af69d252778241cb84221594b436a8677419c31925594"},
-    {file = "ping3-4.0.8.tar.gz", hash = "sha256:9ab460eb57f006b71f977a693d157215aabd6bbcbc6cd6428b6951eaae0c2875"},
-]
-
-[package.extras]
-dev = ["build", "twine"]
 
 [[package]]
 name = "pycparser"
@@ -567,6 +576,17 @@ files = [
 windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
+name = "pypacker"
+version = "5.4"
+description = "Pypacker: The fast and simple packet creating and parsing module"
+optional = false
+python-versions = ">=3.3"
+groups = ["main"]
+files = [
+    {file = "pypacker-5.4.tar.gz", hash = "sha256:80fb794acbe9eb972e43b4b28e85d8899ea3637fa5461df2866736e6d99ea5a3"},
+]
+
+[[package]]
 name = "rich"
 version = "13.9.4"
 description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
@@ -674,4 +694,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "b9f13f9151a1f4b42a38fa14ec9494a9b963aba182bc468edd3ff254505ec76e"
+content-hash = "940223e4d770e384bf356e40325d3efc19fda7f0cdf624665231cce299f19ca4"
