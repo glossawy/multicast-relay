@@ -1186,7 +1186,7 @@ class PacketRelay:
             mac_addr
 
         if key is not None:
-            return self.interface_records[key]
+            return self.interface_records.get(key)
 
     def getInterface(self, interface: str) -> tuple[str, bytes, str, str, str]:
         ifname = None
