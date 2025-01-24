@@ -116,8 +116,7 @@ class Bambu(Handler):
         return datagram
 
     def _unique_waiting_clients(self):
-        while len(_waiting_list) > 0:
-            (client, _) = _waiting_list.popitem()
+        for client, _ in _waiting_list.items():
             yield client
 
     def _enqueue(self, addr: str) -> None:
