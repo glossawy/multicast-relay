@@ -88,7 +88,7 @@ class Bambu(Handler):
                 )
                 self.transmit(
                     datagram.with_different_dst(
-                        constants.SSDP_MCAST_ADDR, BAMBU_MCAST_DISCOVERY_PORT
+                        constants.SSDP_MCAST_ADDR, BAMBU_UNICAST_ANSWER_PORT
                     )
                 )
             else:
