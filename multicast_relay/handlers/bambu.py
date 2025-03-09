@@ -12,9 +12,8 @@ from multicast_relay.handlers.types import Handler
 
 from multicast_relay.logging import Logger
 
-BAMBU_NOTIFY_PORT = constants.SSDP_MCAST_PORT
-BAMBU_SEARCH_PORT = 1990
-BAMBU_ANSWER_PORT = 2021
+BAMBU_MCAST_DISCOVERY_PORT = 1990
+BAMBU_UNICAST_ANSWER_PORT = 2021
 
 MAX_WAIT_BEFORE_REMOVAL = timedelta(minutes=5)
 
@@ -85,17 +84,17 @@ class Bambu(Handler):
             if len(_waiting_list) == 0:
                 self.logger.info(
                     f"[Bambu]: No waiting M-SEARCH requests, forwarding NOTIFY to {
-                        constants.SSDP_MCAST_ADDR}:{constants.SSDP_MCAST_PORT}"
+                        constants.SSDP_MCAST_ADDR}:{BAMBU_MCAST_DISCOVERY_PORT}"
                 )
                 self.transmit(
                     datagram.with_different_dst(
-                        constants.SSDP_MCAST_ADDR, BAMBU_NOTIFY_PORT
+                        constants.SSDP_MCAST_ADDR, BAMBU_UNICAST_ANSWER_PORT
                     )
                 )
             else:
                 for client in self._unique_waiting_clients():
                     tx_dgram = datagram.with_different_dst(
-                        client.address, BAMBU_ANSWER_PORT
+                        client.address, BAMBU_UNICAST_ANSWER_PORT
                     )
 
                     self.logger.info(
